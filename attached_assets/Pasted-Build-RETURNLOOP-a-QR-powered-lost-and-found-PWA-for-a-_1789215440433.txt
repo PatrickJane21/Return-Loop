@@ -1,0 +1,120 @@
+Build RETURNLOOP — a QR-powered lost-and-found PWA for a college. React + Vite + Tailwind + Supabase (already connected). Mobile-first, installable, professional. Tagline: "Lost it? Scan it. Return it."
+
+=== CORE RULE (never break) ===
+QR contains ONLY a random token like RL-X7K92P4M. Never name, ID, class, phone, email. QR identifies the BELONGING, not the PERSON.
+
+=== ROLES ===
+student (default), teacher (admin).
+
+=== DATABASE (create all tables + RLS in one migration) ===
+profiles(id uuid pk refs auth.users, full_name, email, role default 'student', student_id, course_or_class, section, created_at, updated_at)
+items(id uuid pk default gen_random_uuid(), owner_id uuid refs profiles, item_name, category, description, image_url, qr_token text unique, status default 'registered', created_at, updated_at)
+found_reports(id uuid pk default gen_random_uuid(), item_id uuid refs items, finder_name, finder_contact, found_location, found_date timestamptz, message, status default 'pending', created_at)
+notifications(id uuid pk default gen_random_uuid(), recipient_user_id uuid refs profiles, item_id uuid, found_report_id uuid, title, message, notification_type, is_read bool default false, created_at)
+
+Enable RLS on all. Policies:
+- profiles: user reads/updates own row; teacher reads all.
+- items: owner full CRUD own rows; teacher select all; PUBLIC read only via RPC below.
+- found_reports: anyone can insert (public finder); item owner can select reports on own items; teacher select all.
+- notifications: recipient full access; teacher select all.
+
+RPC for public scan (security definer):
+public_item_by_token(t text) returns (item_name text, category text, description text, status text, id uuid) — select from items where qr_token=t.
+
+Trigger on_auth_user_created: insert into profiles(id,email,full_name) from new user.
+
+Realtime: enable on notifications and items tables.
+
+=== PAGES / FLOW ===
+
+1) LANDING
+Logo RETURNLOOP (circular cyan gradient with ↻). Tagline "Lost it? Scan it. Return it."
+Subtitle: "A smart QR-powered lost-and-found system designed to make returning misplaced belongings faster, safer and easier."
+Buttons: GET STARTED (→ /auth), SCAN QR (→ /scan), TRY DEMO (→ seeds demo + logs in as demo student).
+Process strip: REGISTER → QR TAG → FIND → SCAN → NOTIFY → RETURN.
+4 feature cards: Smart QR Identification | Privacy First | Teacher Oversight | Real-Time Notifications.
+Privacy line: "ReturnLoop protects student privacy. QR codes identify belongings, not people."
+
+2) AUTH (/auth)
+Signup: email, password, full_name, student_id, course_or_class, section.
+Login: email, password. Session persists. Logout clears.
+
+3) STUDENT DASHBOARD (/app)
+Bottom tabs (mobile): Dashboard | My Items | Scan QR | Notifications | Profile.
+Stats cards: Total Items, Lost, Found, Returned.
+My Items list: name, category, status badge, QR button.
+Item card actions: View QR (modal), Download QR (png), Print, Mark LOST.
+Notifications tab: list from notifications table, realtime updates, unread badge on tab.
+
+4) REGISTER ITEM (/app/new)
+Fields: item_name, category dropdown (Bottle|Bag|Book|Lunch Box|Clothing|Electronics|Stationery|Calculator|Other), description, optional image (upload to Supabase storage bucket 'item-images').
+On submit: qr_token = 'RL-' + 8 uppercase alphanumeric chars (crypto random), insert item, then show QR modal encoding full URL `<app-url>/found/<qr_token>`. Buttons: Download PNG, Print, Copy Link.
+
+5) SCAN QR (/scan)
+Use html5-qrcode for real camera scan. On success → navigate to /found/<token>.
+Fallback: input box "Enter ReturnLoop ID manually" (e.g. RL-X7K92P4M) → same route.
+Camera denied → auto-show manual input with friendly message.
+
+6) PUBLIC FOUND PAGE (/found/:token)
+Calls public_item_by_token(token). If found:
+Header: "RETURNLOOP ITEM FOUND"
+Show ONLY: item_name, category, safe description, badge "This item is registered with ReturnLoop."
+Big button: "I FOUND THIS ITEM"
+Click → form: finder_name (optional), finder_contact (optional), found_location (required), found_date (required, default now), message (optional).
+Submit → insert found_report + update items.status='found' + insert notification for item owner ("Your item may have been found!") + insert notification for every teacher profile ("New ReturnLoop Found Report") + show success screen "Report submitted. The owner has been notified."
+If token invalid → friendly error "This QR is not a ReturnLoop tag."
+
+7) TEACHER DASHBOARD (/admin)
+Sidebar (or tabs on mobile): Overview | Students | All Items | Lost Items | Found Reports | Returned Items | Notifications | Logout.
+Overview stats: Total Students, Registered Items, Lost, Found, Returned.
+Students page: full info (name, email, student_id, course, section, role).
+All Items: table with owner full info + item + status.
+Found Reports: table with item + owner full info + finder info + location + date + message + status. Button "Mark Returned" → update items.status='returned' + insert notification for owner ("Your item has been marked returned.").
+Realtime: new found reports appear live with toast.
+
+8) REALTIME
+Subscribe to notifications filtered by recipient_user_id. On insert: toast + badge.
+Subscribe to found_reports (teacher only) for live updates.
+
+=== DEMO MODE ===
+"TRY DEMO" button on landing runs an idempotent seed (check if demo users exist first):
+- teacher@returnloop.demo / demo1234, role teacher, name "Ms. Sharma"
+- aryan@returnloop.demo / demo1234, role student, name "Aryan Mishra", student_id "CSE2024001", course "B.Tech CSE", section "P"
+- 3 items for Aryan: {Blue Water Bottle / Bottle / "Blue Milton bottle, small dent on cap"}, {Black Backpack / Bag / "Wildcraft, front pocket torn"}, {Engineering Mathematics Book / Book / "B.S. Grewal, name written inside"}.
+- 1 found_report already filed for Blue Water Bottle: location "Library — 2nd floor entrance", message "Found near the entrance.", finder_name "Rahul", found_date now-2h, status pending.
+Then logs in as Aryan and redirects to /app.
+When demo session active, show floating banner "DEMO DATA" bottom-right.
+Teacher demo login button also available on /auth page: "Enter Teacher Demo".
+
+=== DESIGN ===
+Palette: bg #0a0e1a, cards #141a2e / #1c2340, border #2a3450, accent cyan #00e5ff, purple #a855f7, green #22c55e, orange #f59e0b, red #ef4444, text #e8ecf5, muted #8892a8.
+Rounded-2xl cards, subtle shadows, smooth transitions, clean typography, strong hierarchy. Modern and minimal — not a generic AI dashboard.
+Status badges: registered (cyan), lost (red), found (orange), returned (green).
+
+=== PWA ===
+manifest.webmanifest: name "RETURNLOOP", short_name "ReturnLoop", theme_color #0a0e1a, background_color #0a0e1a, display standalone, icons 192 + 512 (cyan ↻ on dark).
+Service worker with offline shell.
+Mobile viewport meta.
+Register SW in main entry.
+
+=== ERROR HANDLING ===
+Invalid QR / token → friendly message. Camera denied → manual input fallback. Network error → retry. Missing required fields → inline validation. Never blank screen. Always a way back.
+
+=== SECURITY ===
+RLS enforced at DB level. Never expose service-role key in frontend. Public scan uses only the RPC. No personal data on public page.
+
+=== DO NOT ===
+No social features, no chat, no feed, no extra tabs. No personal info in QR. No sequential tokens. No fake buttons — everything wired to Supabase.
+
+=== BUILD ORDER (priority) ===
+1. DB migration + RLS + trigger + RPC
+2. Auth + profiles
+3. Student register item + QR generation + download
+4. Scan + public found page + found report submit
+5. Notifications (owner + teacher) with realtime
+6. Teacher dashboard + mark returned
+7. Demo mode seed
+8. PWA manifest + icons + SW
+9. Polish design + error handling
+
+Ship the working core flow first, polish after. One pass.
