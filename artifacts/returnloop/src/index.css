@@ -433,6 +433,16 @@
   }
 }
 
+.returnloop-scanner #returnloop-qr-reader video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover;
+}
+
+.returnloop-scanner #returnloop-qr-reader > div {
+  display: none;
+}
+
 @layer base {
   html { scroll-behavior: smooth; }
   body { min-width: 320px; }

@@ -1,4 +1,4 @@
-import { type ReactNode, createContext, useContext, useEffect, useState } from 'react';
+import { type ReactNode, createContext, useContext, useEffect, useRef, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
@@ -10,6 +10,8 @@ import {
   ExternalLink, Inbox, CircleAlert, MoreHorizontal, Printer
 } from 'lucide-react';
 import { Link, Route, Switch, useLocation, useParams, Router as WouterRouter } from 'wouter';
+import QRCode from 'qrcode';
+import { Html5Qrcode } from 'html5-qrcode';
 
 type Role = 'student' | 'teacher';
 type Status = 'registered' | 'reported' | 'returned';
@@ -23,6 +25,13 @@ type Db = { profiles: Profile[]; items: Item[]; reports: Report[]; notifications
 const queryClient = new QueryClient();
 const DB_KEY = 'returnloop-db-v1';
 const SESSION_KEY = 'returnloop-session';
+const TOKEN_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+function createQrToken() {
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  return `RL-${Array.from(bytes, (byte) => TOKEN_ALPHABET[byte % TOKEN_ALPHABET.length]).join('')}`;
+}
 
 const seed: Db = {
   profiles: [
@@ -58,7 +67,7 @@ type Store = {
   session: string | null;
   signIn: (id: string) => void;
   addItem: (item: Item) => void;
-  addReport: (report: Report, notification: Notice) => void;
+  addReport: (report: Report) => void;
   markReturned: (itemId: string) => void;
   markRead: (id: string) => void;
   profile: Profile | undefined;
@@ -80,7 +89,38 @@ function StoreProvider({ children }: { children: ReactNode }) {
     db, session, profile,
     signIn: (id) => setSession(id),
     addItem: (item) => setDb((current) => ({ ...current, items: [item, ...current.items], notifications: [{ id: `note-${Date.now()}`, recipient_user_id: item.owner_id, item_id: item.id, title: 'Your item is protected', message: `${item.item_name} is now registered with ReturnLoop.`, notification_type: 'registered', is_read: true, created_at: new Date().toISOString() }, ...current.notifications] })),
-    addReport: (report, notification) => setDb((current) => ({ ...current, reports: [report, ...current.reports], items: current.items.map((item) => item.id === report.item_id ? { ...item, status: 'reported' } : item), notifications: [notification, ...current.notifications] })),
+    addReport: (report) => setDb((current) => {
+      const item = current.items.find((entry) => entry.id === report.item_id);
+      const timestamp = new Date().toISOString();
+      const ownerNotification: Notice = {
+        id: `note-owner-${Date.now()}`,
+        recipient_user_id: item?.owner_id ?? '',
+        item_id: report.item_id,
+        found_report_id: report.id,
+        title: 'A finder is looking out for you',
+        message: `${item?.item_name ?? 'Your item'} was found near ${report.found_location}.`,
+        notification_type: 'found_report',
+        is_read: false,
+        created_at: timestamp,
+      };
+      const teacherNotifications = current.profiles.filter((profile) => profile.role === 'teacher').map((teacher) => ({
+        id: `note-teacher-${teacher.id}-${Date.now()}`,
+        recipient_user_id: teacher.id,
+        item_id: report.item_id,
+        found_report_id: report.id,
+        title: 'New ReturnLoop Found Report',
+        message: `${item?.item_name ?? 'An item'} was reported near ${report.found_location}.`,
+        notification_type: 'found_report',
+        is_read: false,
+        created_at: timestamp,
+      }));
+      return {
+        ...current,
+        reports: [report, ...current.reports],
+        items: current.items.map((entry) => entry.id === report.item_id ? { ...entry, status: 'reported' } : entry),
+        notifications: [...teacherNotifications, ownerNotification, ...current.notifications],
+      };
+    }),
     markReturned: (itemId) => setDb((current) => ({ ...current, items: current.items.map((item) => item.id === itemId ? { ...item, status: 'returned' } : item), reports: current.reports.map((report) => report.item_id === itemId ? { ...report, status: 'returned' } : report) })),
     markRead: (id) => setDb((current) => ({ ...current, notifications: current.notifications.map((n) => n.id === id ? { ...n, is_read: true } : n) })),
   };
@@ -210,20 +250,64 @@ function NewItemPage() {
   const [description, setDescription] = useState('');
   const [created, setCreated] = useState<Item | null>(null);
   if (!profile) return <AccessGate />;
-  const create = (event: React.FormEvent) => { event.preventDefault(); const token = `RL-${Math.random().toString(36).slice(2, 10).toUpperCase()}`; const item: Item = { id: `item-${Date.now()}`, owner_id: profile.id, item_name: name, category, description, qr_token: token, status: 'registered', created_at: new Date().toISOString() }; addItem(item); setCreated(item); };
+  const create = (event: React.FormEvent) => { event.preventDefault(); const token = createQrToken(); const item: Item = { id: `item-${Date.now()}`, owner_id: profile.id, item_name: name, category, description, qr_token: token, status: 'registered', created_at: new Date().toISOString() }; addItem(item); setCreated(item); };
   return <DashboardShell active="new"><div className="mx-auto max-w-[980px] px-5 py-7 sm:px-8 md:py-10 lg:px-12"><Link href="/app" data-testid="link-new-back" className="inline-flex items-center gap-2 text-xs font-bold text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--primary))]"><ArrowLeft size={15} /> Back to overview</Link><div className="mt-8 max-w-xl"><Pill tone="green"><Sparkles size={13} /> Two minutes to peace of mind</Pill><h1 className="mt-5 font-display text-4xl font-bold tracking-[-.05em] sm:text-5xl">Register something<br /><span className="text-[hsl(var(--secondary))]">worth finding.</span></h1><p className="mt-4 leading-7 text-[hsl(var(--muted-foreground))]">We’ll make a private code for it. Add the code to the item, and your campus can help it travel back to you.</p></div><form onSubmit={create} className="mt-10 grid gap-8 lg:grid-cols-[1fr_300px]"><div className="space-y-6 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card)/.6)] p-5 sm:p-7"><div><label className="mb-2 block text-xs font-bold">What are you registering?</label><input required value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Silver laptop" data-testid="input-item-name" className="w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-4 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))] focus:ring-4 focus:ring-[hsl(var(--secondary)/.12)]" /></div><div><label className="mb-2 block text-xs font-bold">A few identifying details <span className="font-normal text-[hsl(var(--muted-foreground))]">optional</span></label><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={4} placeholder="Color, stickers, case, initials..." data-testid="input-item-description" className="w-full resize-none rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-4 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))] focus:ring-4 focus:ring-[hsl(var(--secondary)/.12)]" /></div><div><label className="mb-2 block text-xs font-bold">Category</label><div className="grid grid-cols-2 gap-2 sm:grid-cols-5">{(['Tech', 'Study', 'Wearables', 'Personal', 'Other'] as Category[]).map((entry) => <button type="button" key={entry} onClick={() => setCategory(entry)} data-testid={`button-category-${entry.toLowerCase()}`} className={`rounded-xl border px-2 py-3 text-xs font-bold transition ${category === entry ? 'border-[hsl(var(--secondary))] bg-[hsl(var(--secondary)/.18)] text-[hsl(var(--primary))]' : 'border-[hsl(var(--border))] text-[hsl(var(--muted-foreground))] hover:bg-[hsl(var(--muted))]'}`}>{entry}</button>)}</div></div><div className="flex gap-3 rounded-xl bg-[hsl(var(--secondary)/.11)] p-3.5 text-xs leading-5 text-[hsl(161_38%_29%)]"><ShieldCheck size={17} className="mt-0.5 shrink-0" /> Your ReturnLoop code contains no name, email, or student details.</div><Button type="submit" className="w-full sm:w-auto" data-testid="button-create-item">Create private code <ArrowRight size={16} /></Button></div><aside className="h-fit rounded-2xl bg-[hsl(var(--primary))] p-6 text-[hsl(var(--primary-foreground))]"><QrCode className="text-[hsl(var(--secondary))]" size={27} /><h2 className="mt-7 font-display text-2xl font-bold">A small code.<br />A big handoff.</h2><p className="mt-3 text-sm leading-6 text-[hsl(var(--primary-foreground)/.61)]">When someone finds your item, they can scan this code to send a note without seeing who you are.</p><div className="mt-8 border-t border-[hsl(var(--primary-foreground)/.16)] pt-4 text-xs text-[hsl(var(--primary-foreground)/.56)]">You’ll be able to download or print it after creating.</div></aside></form></div>{created && <QrModal item={created} onClose={() => setLocation('/app')} />}</DashboardShell>;
 }
 function QrModal({ item, onClose }: { item: Item; onClose: () => void }) {
-  const copy = () => navigator.clipboard?.writeText(item.qr_token);
-  const download = () => { const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="500" height="500" viewBox="0 0 500 500"><rect width="500" height="500" fill="#f8f5ed"/><rect x="32" y="32" width="436" height="436" rx="30" fill="#18363b"/><text x="250" y="105" fill="#86d3b2" font-family="monospace" font-size="20" text-anchor="middle">${item.qr_token}</text><g fill="#86d3b2">${Array.from({ length: 169 }, (_, i) => ((i * 17) % 7 < 3 ? `<rect x="${70 + (i % 13) * 28}" y="${135 + Math.floor(i / 13) * 25}" width="18" height="18"/>` : '')).join('')}</g><text x="250" y="445" fill="#f8f5ed" font-family="sans-serif" font-size="14" text-anchor="middle">SCAN TO HELP THIS ITEM HOME</text></svg>`; const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' })); link.download = `${item.qr_token}.svg`; link.click(); URL.revokeObjectURL(link.href); };
-  return <div className="fixed inset-0 z-50 grid place-items-center bg-[hsl(var(--primary)/.58)] p-5 backdrop-blur-sm"><div className="relative max-h-[90dvh] w-full max-w-md overflow-auto rounded-[1.75rem] bg-[hsl(var(--card))] p-6 shadow-2xl sm:p-8"><button onClick={onClose} data-testid="button-qr-close" className="absolute right-5 top-5 rounded-lg p-2 text-[hsl(var(--muted-foreground))] hover:bg-[hsl(var(--muted))]"><X size={18} /></button><Pill tone="green"><Check size={13} /> Item protected</Pill><h2 className="mt-5 font-display text-3xl font-bold tracking-[-.04em]">Your code is ready.</h2><p className="mt-2 text-sm leading-6 text-[hsl(var(--muted-foreground))]">Save this code with your {item.item_name}. Anyone who scans it can send a safe found note.</p><div className="mx-auto mt-6 max-w-[250px] rounded-2xl bg-[hsl(var(--primary))] p-5"><div className="grid grid-cols-7 gap-1">{Array.from({ length: 49 }, (_, i) => <span key={i} className={`aspect-square rounded-[2px] ${((i * 11 + 3) % 5 < 2 || [0,1,2,7,14,34,35,36,41,42,48].includes(i)) ? 'bg-[hsl(var(--secondary))]' : 'bg-[hsl(var(--primary-foreground)/.16)]'}`} />)}</div><p className="mt-4 text-center font-mono-app text-sm tracking-[.13em] text-[hsl(var(--secondary))]">{item.qr_token}</p></div><div className="mt-6 grid grid-cols-3 gap-2"><Button variant="outline" onClick={download} data-testid="button-qr-download"><Download size={15} /> Save</Button><Button variant="outline" onClick={() => window.print()} data-testid="button-qr-print"><Printer size={15} /> Print</Button><Button variant="outline" onClick={copy} data-testid="button-qr-copy"><Copy size={15} /> Copy</Button></div><Button className="mt-3 w-full" onClick={onClose} data-testid="button-qr-done">See my items <ArrowRight size={16} /></Button></div></div>;
+  const [qrDataUrl, setQrDataUrl] = useState('');
+  const publicUrl = `${window.location.origin}${import.meta.env.BASE_URL}found/${item.qr_token}`;
+  useEffect(() => {
+    let active = true;
+    QRCode.toDataURL(publicUrl, { width: 800, margin: 2, color: { dark: '#86d3b2', light: '#18363b' } }).then((dataUrl) => {
+      if (active) setQrDataUrl(dataUrl);
+    }).catch(() => {
+      if (active) setQrDataUrl('');
+    });
+    return () => { active = false; };
+  }, [publicUrl]);
+  const copy = () => navigator.clipboard?.writeText(publicUrl);
+  const download = () => {
+    if (!qrDataUrl) return;
+    const link = document.createElement('a');
+    link.href = qrDataUrl;
+    link.download = `${item.qr_token}.png`;
+    link.click();
+  };
+  return <div className="fixed inset-0 z-50 grid place-items-center bg-[hsl(var(--primary)/.58)] p-5 backdrop-blur-sm"><div className="relative max-h-[90dvh] w-full max-w-md overflow-auto rounded-[1.75rem] bg-[hsl(var(--card))] p-6 shadow-2xl sm:p-8"><button onClick={onClose} data-testid="button-qr-close" className="absolute right-5 top-5 rounded-lg p-2 text-[hsl(var(--muted-foreground))] hover:bg-[hsl(var(--muted))]"><X size={18} /></button><Pill tone="green"><Check size={13} /> Item protected</Pill><h2 className="mt-5 font-display text-3xl font-bold tracking-[-.04em]">Your code is ready.</h2><p className="mt-2 text-sm leading-6 text-[hsl(var(--muted-foreground))]">Save this code with your {item.item_name}. Anyone who scans it can send a safe found note.</p><div className="mx-auto mt-6 max-w-[250px] rounded-2xl bg-[hsl(var(--primary))] p-5"><div className="grid min-h-[210px] place-items-center rounded-xl bg-[hsl(var(--primary))]">{qrDataUrl ? <img src={qrDataUrl} alt={`QR code for ${item.item_name}`} className="h-full w-full rounded-lg" data-testid="img-item-qr" /> : <span className="text-xs text-[hsl(var(--primary-foreground)/.6)]">Generating secure QR…</span>}</div><p className="mt-4 text-center font-mono-app text-sm tracking-[.13em] text-[hsl(var(--secondary))]">{item.qr_token}</p></div><p className="mt-3 break-all text-center font-mono-app text-[10px] text-[hsl(var(--muted-foreground))]">{publicUrl}</p><div className="mt-6 grid grid-cols-3 gap-2"><Button variant="outline" onClick={download} disabled={!qrDataUrl} data-testid="button-qr-download"><Download size={15} /> Save</Button><Button variant="outline" onClick={() => window.print()} data-testid="button-qr-print"><Printer size={15} /> Print</Button><Button variant="outline" onClick={copy} data-testid="button-qr-copy"><Copy size={15} /> Copy link</Button></div><Button className="mt-3 w-full" onClick={onClose} data-testid="button-qr-done">See my items <ArrowRight size={16} /></Button></div></div>;
 }
 
 function ScanPage() {
   const [, setLocation] = useLocation();
   const [token, setToken] = useState('');
+  const [cameraActive, setCameraActive] = useState(false);
+  const [cameraError, setCameraError] = useState('');
+  const scannerRef = useRef<Html5Qrcode | null>(null);
+  useEffect(() => {
+    if (!cameraActive) return;
+    const scanner = new Html5Qrcode('returnloop-qr-reader');
+    scannerRef.current = scanner;
+    const openFoundPage = (decodedText: string) => {
+      const match = decodedText.match(/(RL-[A-Z0-9]{8})/i);
+      const clean = (match?.[1] ?? decodedText).trim().toUpperCase();
+      if (!clean.startsWith('RL-')) {
+        setCameraError('That code is not a ReturnLoop tag. You can enter the ID manually below.');
+        return;
+      }
+      void scanner.stop().catch(() => undefined);
+      setLocation(`/found/${clean}`);
+    };
+    scanner.start({ facingMode: 'environment' }, { fps: 10, qrbox: { width: 230, height: 230 } }, openFoundPage, () => undefined)
+      .catch(() => {
+        setCameraError('Camera access was unavailable. Enter the ReturnLoop ID manually below.');
+        setCameraActive(false);
+      });
+    return () => {
+      void scanner.stop().catch(() => undefined);
+      scannerRef.current = null;
+    };
+  }, [cameraActive, setLocation]);
   const submit = (e: React.FormEvent) => { e.preventDefault(); const clean = token.trim().toUpperCase(); if (clean) setLocation(`/found/${clean}`); };
-  return <div className="min-h-[100dvh] bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]"><div className="mx-auto max-w-[620px] px-5 py-6 sm:px-8"><div className="flex items-center justify-between"><Link href="/app" data-testid="link-scan-back" className="grid h-10 w-10 place-items-center rounded-xl bg-[hsl(var(--primary-foreground)/.1)]"><ArrowLeft size={18} /></Link><Logo inverse /><span className="w-10" /></div><div className="pt-16 text-center"><Pill tone="green"><ScanLine size={13} /> Finder mode</Pill><h1 className="mt-6 font-display text-4xl font-bold tracking-[-.05em]">A small scan<br /><span className="text-[hsl(var(--secondary))]">can change a day.</span></h1><p className="mx-auto mt-4 max-w-sm text-sm leading-6 text-[hsl(var(--primary-foreground)/.6)]">Point your camera at a ReturnLoop code to safely tell its owner you found something.</p><div className="relative mx-auto mt-12 aspect-square max-w-[330px] overflow-hidden rounded-[2rem] border border-[hsl(var(--primary-foreground)/.18)] bg-[hsl(var(--primary-foreground)/.05)]"><div className="absolute inset-8 rounded-[1.3rem] border-2 border-[hsl(var(--secondary))] shadow-[0_0_0_999px_hsl(var(--primary)/.22)]"><span className="absolute -left-1 -top-1 h-8 w-8 border-l-4 border-t-4 border-[hsl(var(--secondary))]" /><span className="absolute -right-1 -top-1 h-8 w-8 border-r-4 border-t-4 border-[hsl(var(--secondary))]" /><span className="absolute -bottom-1 -left-1 h-8 w-8 border-b-4 border-l-4 border-[hsl(var(--secondary))]" /><span className="absolute -bottom-1 -right-1 h-8 w-8 border-b-4 border-r-4 border-[hsl(var(--secondary))]" /><span className="absolute inset-x-4 top-1/2 h-px bg-[hsl(var(--secondary)/.8)] shadow-[0_0_18px_hsl(var(--secondary))]" /></div><div className="absolute inset-0 grid place-items-center"><ScanLine size={31} className="text-[hsl(var(--primary-foreground)/.28)]" /></div></div><p className="mt-8 text-xs text-[hsl(var(--primary-foreground)/.45)]">Camera preview is ready in the app</p><div className="my-8 flex items-center gap-3 text-[10px] uppercase tracking-[.16em] text-[hsl(var(--primary-foreground)/.4)]"><span className="h-px flex-1 bg-[hsl(var(--primary-foreground)/.15)]" /> Or enter a code <span className="h-px flex-1 bg-[hsl(var(--primary-foreground)/.15)]" /></div><form onSubmit={submit} className="flex gap-2"><input value={token} onChange={(e) => setToken(e.target.value)} placeholder="RL-XXXXXXXX" data-testid="input-manual-token" className="min-w-0 flex-1 rounded-xl border border-[hsl(var(--primary-foreground)/.18)] bg-[hsl(var(--primary-foreground)/.08)] px-4 py-3 font-mono-app text-sm uppercase tracking-[.1em] text-[hsl(var(--primary-foreground))] outline-none placeholder:text-[hsl(var(--primary-foreground)/.35)] focus:border-[hsl(var(--secondary))]" /><Button type="submit" className="shrink-0 bg-[hsl(var(--secondary))] text-[hsl(var(--primary))]" data-testid="button-manual-scan">Open <ArrowRight size={16} /></Button></form><p className="mt-4 text-center text-[11px] text-[hsl(var(--primary-foreground)/.38)]">Try <button onClick={() => setToken('RL-4W1D8N6C')} data-testid="button-scan-example" className="font-mono-app underline decoration-[hsl(var(--secondary)/.5)] underline-offset-2">RL-4W1D8N6C</button> in the demo.</p></div></div></div>;
+  return <div className="returnloop-scanner min-h-[100dvh] bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]"><div className="mx-auto max-w-[620px] px-5 py-6 sm:px-8"><div className="flex items-center justify-between"><Link href="/app" data-testid="link-scan-back" className="grid h-10 w-10 place-items-center rounded-xl bg-[hsl(var(--primary-foreground)/.1)]"><ArrowLeft size={18} /></Link><Logo inverse /><span className="w-10" /></div><div className="pt-12 text-center"><Pill tone="green"><ScanLine size={13} /> Finder mode</Pill><h1 className="mt-6 font-display text-4xl font-bold tracking-[-.05em]">A small scan<br /><span className="text-[hsl(var(--secondary))]">can change a day.</span></h1><p className="mx-auto mt-4 max-w-sm text-sm leading-6 text-[hsl(var(--primary-foreground)/.6)]">Point your camera at a ReturnLoop code to safely tell its owner you found something.</p><Button type="button" onClick={() => { setCameraError(''); setCameraActive(true); }} className="mt-7 bg-[hsl(var(--secondary))] text-[hsl(var(--primary))]" data-testid="button-start-camera"><ScanLine size={16} /> {cameraActive ? 'Scanning for a code' : 'Scan QR code'}</Button><div className="relative mx-auto mt-8 aspect-square max-w-[330px] overflow-hidden rounded-[2rem] border border-[hsl(var(--primary-foreground)/.18)] bg-[hsl(var(--primary-foreground)/.05)]"><div id="returnloop-qr-reader" className="absolute inset-0 overflow-hidden rounded-[2rem]" data-testid="camera-preview" /><div className="pointer-events-none absolute inset-8 rounded-[1.3rem] border-2 border-[hsl(var(--secondary))] shadow-[0_0_0_999px_hsl(var(--primary)/.22)]"><span className="absolute -left-1 -top-1 h-8 w-8 border-l-4 border-t-4 border-[hsl(var(--secondary))]" /><span className="absolute -right-1 -top-1 h-8 w-8 border-r-4 border-t-4 border-[hsl(var(--secondary))]" /><span className="absolute -bottom-1 -left-1 h-8 w-8 border-b-4 border-l-4 border-[hsl(var(--secondary))]" /><span className="absolute -bottom-1 -right-1 h-8 w-8 border-b-4 border-r-4 border-[hsl(var(--secondary))]" /><span className="absolute inset-x-4 top-1/2 h-px bg-[hsl(var(--secondary)/.8)] shadow-[0_0_18px_hsl(var(--secondary))]" /></div>{!cameraActive && <div className="absolute inset-0 grid place-items-center"><div className="text-center"><ScanLine size={31} className="mx-auto text-[hsl(var(--primary-foreground)/.28)]" /><p className="mt-3 text-xs text-[hsl(var(--primary-foreground)/.48)]">Tap scan to use your camera</p></div></div>}</div><p className="mt-6 min-h-5 text-xs text-[hsl(var(--primary-foreground)/.55)]">{cameraError || (cameraActive ? 'Camera is looking for a ReturnLoop code.' : 'Camera stays off until you choose to scan.')}</p><div className="my-7 flex items-center gap-3 text-[10px] uppercase tracking-[.16em] text-[hsl(var(--primary-foreground)/.4)]"><span className="h-px flex-1 bg-[hsl(var(--primary-foreground)/.15)]" /> Or enter a code <span className="h-px flex-1 bg-[hsl(var(--primary-foreground)/.15)]\" /></div><form onSubmit={submit} className="flex gap-2"><input value={token} onChange={(e) => setToken(e.target.value)} placeholder="RL-XXXXXXXX" data-testid="input-manual-token" className="min-w-0 flex-1 rounded-xl border border-[hsl(var(--primary-foreground)/.18)] bg-[hsl(var(--primary-foreground)/.08)] px-4 py-3 font-mono-app text-sm uppercase tracking-[.1em] text-[hsl(var(--primary-foreground))] outline-none placeholder:text-[hsl(var(--primary-foreground)/.35)] focus:border-[hsl(var(--secondary))]" /><Button type="submit" className="shrink-0 bg-[hsl(var(--secondary))] text-[hsl(var(--primary))]" data-testid="button-manual-scan">Open <ArrowRight size={16} /></Button></form><p className="mt-4 text-center text-[11px] text-[hsl(var(--primary-foreground)/.38)]">Try <button onClick={() => setToken('RL-4W1D8N6C')} data-testid="button-scan-example" className="font-mono-app underline decoration-[hsl(var(--secondary)/.5)] underline-offset-2">RL-4W1D8N6C</button> in the demo.</p></div></div></div>;
 }
 
 function FoundPage() {
@@ -233,7 +317,7 @@ function FoundPage() {
   const [sent, setSent] = useState(false);
   const [finder, setFinder] = useState(''); const [contact, setContact] = useState(''); const [location, setFoundLocation] = useState(''); const [date, setDate] = useState(new Date().toISOString().slice(0, 10)); const [message, setMessage] = useState('');
   if (!item) return <div className="grid min-h-[100dvh] place-items-center bg-[hsl(var(--background))] px-5"><div className="max-w-md text-center"><CircleAlert className="mx-auto text-[hsl(var(--accent))]" size={38} /><h1 className="mt-5 font-display text-3xl font-bold">That code took a wrong turn.</h1><p className="mt-3 text-sm text-[hsl(var(--muted-foreground))]">We couldn’t find a registered item for {token}.</p><Link href="/scan" data-testid="link-found-scan-again" className="mt-7 inline-flex items-center gap-2 font-bold text-[hsl(var(--primary))]">Try another code <ArrowRight size={16} /></Link></div></div>;
-  const submit = (e: React.FormEvent) => { e.preventDefault(); const report: Report = { id: `report-${Date.now()}`, item_id: item.id, finder_name: finder, finder_contact: contact, found_location: location, found_date: date, message, status: 'new', created_at: new Date().toISOString() }; addReport(report, { id: `note-${Date.now()}`, recipient_user_id: item.owner_id, item_id: item.id, found_report_id: report.id, title: 'A finder is looking out for you', message: `${item.item_name} was found near ${location}.`, notification_type: 'found_report', is_read: false, created_at: new Date().toISOString() }); setSent(true); };
+  const submit = (e: React.FormEvent) => { e.preventDefault(); const report: Report = { id: `report-${Date.now()}`, item_id: item.id, finder_name: finder, finder_contact: contact, found_location: location, found_date: date, message, status: 'new', created_at: new Date().toISOString() }; addReport(report); setSent(true); };
   return <div className="min-h-[100dvh] bg-[hsl(var(--background))]"><TopBar action={<Link href="/scan" data-testid="link-found-scan" className="flex items-center gap-2 text-sm font-bold text-[hsl(var(--muted-foreground))]"><ScanLine size={16} /> Scan another</Link>} /><main className="mx-auto grid max-w-[1050px] gap-8 px-5 py-8 sm:px-8 lg:grid-cols-[.8fr_1fr] lg:py-16"><div className="animate-in-up"><Pill tone="green"><ShieldCheck size={13} /> Safe return page</Pill><h1 className="mt-6 font-display text-5xl font-extrabold leading-[.92] tracking-[-.06em] text-[hsl(var(--primary))]">You found<br /><span className="text-[hsl(var(--secondary))]">something.</span></h1><p className="mt-5 max-w-sm leading-7 text-[hsl(var(--muted-foreground))]">Thank you for stopping long enough to scan. A short note is all it takes to start the journey home.</p><div className="mt-9 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-5"><p className="font-mono-app text-[10px] uppercase tracking-[.16em] text-[hsl(var(--muted-foreground))]">Registered item</p><div className="mt-4 flex items-center gap-3"><span className="grid h-12 w-12 place-items-center rounded-xl bg-[hsl(var(--primary))] text-[hsl(var(--secondary))]"><Package size={21} /></span><div><h2 className="font-display text-xl font-bold">{item.item_name}</h2><p className="text-xs text-[hsl(var(--muted-foreground))]">{item.category} · {item.description || 'Details kept intentionally brief.'}</p></div></div><div className="mt-5 flex items-center gap-2 border-t border-[hsl(var(--border))] pt-4 text-xs text-[hsl(var(--muted-foreground))]"><LockKeyhole size={14} className="text-[hsl(var(--secondary))]" /> Owner details stay private.</div></div></div>{sent ? <div className="self-center rounded-[1.75rem] border border-[hsl(var(--secondary)/.6)] bg-[hsl(var(--secondary)/.12)] p-7 text-center sm:p-10"><span className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-[hsl(var(--secondary))] text-[hsl(var(--primary))]"><Check size={27} /></span><h2 className="mt-5 font-display text-3xl font-bold">Note sent with care.</h2><p className="mx-auto mt-3 max-w-sm text-sm leading-6 text-[hsl(161_38%_29%)]">The owner has been notified. If they need to reach you, they’ll use the contact you left here.</p><Link href="/scan" data-testid="link-found-done" className="mt-7 inline-flex items-center gap-2 text-sm font-bold text-[hsl(var(--primary))]">Scan another item <ArrowRight size={16} /></Link></div> : <form onSubmit={submit} className="rounded-[1.75rem] border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-5 shadow-[0_18px_50px_hsl(var(--primary)/.06)] sm:p-8"><h2 className="font-display text-2xl font-bold">Send a safe found note</h2><p className="mt-2 text-sm text-[hsl(var(--muted-foreground))]">Your contact is only shared with the item owner through ReturnLoop.</p><div className="mt-6 grid gap-4 sm:grid-cols-2"><Field label="Your name" value={finder} setValue={setFinder} placeholder="Jordan Lee" test="input-finder-name" required /><Field label="Email or phone" value={contact} setValue={setContact} placeholder="How can they reach you?" test="input-finder-contact" required /><Field label="Where did you find it?" value={location} setValue={setFoundLocation} placeholder="West Library, level 2" test="input-found-location" required /><div><label className="mb-1.5 block text-xs font-bold">Date found</label><input value={date} onChange={(e) => setDate(e.target.value)} type="date" required data-testid="input-found-date" className="w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]" /></div></div><div className="mt-4"><label className="mb-1.5 block text-xs font-bold">A note for the owner <span className="font-normal text-[hsl(var(--muted-foreground))]">optional</span></label><textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={4} placeholder="It’s safe with me. I left it at..." data-testid="input-found-message" className="w-full resize-none rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]" /></div><Button type="submit" className="mt-5 w-full" data-testid="button-send-found-report"><Send size={16} /> Send note to the owner</Button></form>}</main></div>;
 }
 function Field({ label, value, setValue, placeholder, test, required }: { label: string; value: string; setValue: (value: string) => void; placeholder: string; test: string; required?: boolean }) { return <div><label className="mb-1.5 block text-xs font-bold">{label}</label><input value={value} onChange={(e) => setValue(e.target.value)} required={required} placeholder={placeholder} data-testid={test} className="w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]" /></div>; }
