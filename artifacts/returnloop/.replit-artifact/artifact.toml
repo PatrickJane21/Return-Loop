@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "RETURNLOOP"
+description = "A mobile-first QR-powered lost-and-found web app for colleges, helping students and teachers register belongings, report found items, and complete safe returns."
+version = "1.0.0"
+id = "artifacts/returnloop"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 26222
+
+[services.development]
+run = "pnpm --filter @workspace/returnloop run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/returnloop", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/returnloop/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "26222"
+BASE_PATH = "/"
