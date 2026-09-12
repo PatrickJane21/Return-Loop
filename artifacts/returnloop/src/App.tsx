@@ -5,16 +5,16 @@ import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import {
   ArrowLeft, ArrowRight, BadgeCheck, Bell, BookOpen, Check, CheckCircle2, ChevronRight,
-  Copy, Download, HeartHandshake, Home, KeyRound, Link2, LockKeyhole, Package, Plus,
+  Copy, Download, Eye, EyeOff, HeartHandshake, Home, KeyRound, Link2, LockKeyhole, Package, Plus,
   QrCode, ScanLine, Search, Send, Settings, ShieldCheck, Sparkles, UserRound, Users, X,
-  ExternalLink, Inbox, CircleAlert, MoreHorizontal, Printer
+  ExternalLink, Inbox, CircleAlert, MoreHorizontal, Printer, LogOut, RefreshCw
 } from 'lucide-react';
 import { Link, Route, Switch, useLocation, useParams, Router as WouterRouter } from 'wouter';
 import QRCode from 'qrcode';
 import { Html5Qrcode } from 'html5-qrcode';
 
 type Role = 'student' | 'teacher';
-type Status = 'registered' | 'reported' | 'returned';
+type Status = 'lost' | 'found' | 'returned';
 type Category = 'Tech' | 'Study' | 'Wearables' | 'Personal' | 'Other';
 type Profile = { id: string; full_name: string; email: string; role: Role; student_id?: string; course_or_class?: string; section?: string };
 type Item = { id: string; owner_id: string; item_name: string; category: Category; description: string; qr_token: string; status: Status; created_at: string };
@@ -36,14 +36,17 @@ function createQrToken() {
 const seed: Db = {
   profiles: [
     { id: 'student-1', full_name: 'Aryan Mishra', email: 'aryan.mishra@northfield.edu', role: 'student', student_id: 'NF-24-071', course_or_class: 'Computer Science', section: 'B' },
-    { id: 'student-2', full_name: 'Maya Chen', email: 'maya.chen@northfield.edu', role: 'student', student_id: 'NF-23-118', course_or_class: 'Architecture', section: 'A' },
+    { id: 'student-2', full_name: 'Anunay Sharma', email: 'anunay.sharma@northfield.edu', role: 'student', student_id: 'NF-24-108', course_or_class: 'Architecture', section: 'A' },
+    { id: 'student-3', full_name: 'Adarsh Verma', email: 'adarsh.verma@northfield.edu', role: 'student', student_id: 'NF-24-142', course_or_class: 'Mechanical Engineering', section: 'C' },
     { id: 'teacher-1', full_name: 'Dr. Lena Ortiz', email: 'lena.ortiz@northfield.edu', role: 'teacher', course_or_class: 'Student Life' },
   ],
   items: [
-    { id: 'item-1', owner_id: 'student-1', item_name: 'Midnight blue backpack', category: 'Study', description: 'Navy canvas backpack with a small stitched moon patch and a silver water bottle pocket.', qr_token: 'RL-7K2M9P4Q', status: 'registered', created_at: '2025-02-06T10:24:00.000Z' },
-    { id: 'item-2', owner_id: 'student-1', item_name: 'Silver laptop', category: 'Tech', description: '13-inch silver laptop with a pale green sticker on the lid.', qr_token: 'RL-4W1D8N6C', status: 'reported', created_at: '2025-01-26T09:12:00.000Z' },
+    { id: 'item-1', owner_id: 'student-1', item_name: 'Midnight blue backpack', category: 'Study', description: 'Navy canvas backpack with a small stitched moon patch and a silver water bottle pocket.', qr_token: 'RL-7K2M9P4Q', status: 'lost', created_at: '2025-02-06T10:24:00.000Z' },
+    { id: 'item-2', owner_id: 'student-1', item_name: 'Silver laptop', category: 'Tech', description: '13-inch silver laptop with a pale green sticker on the lid.', qr_token: 'RL-4W1D8N6C', status: 'found', created_at: '2025-01-26T09:12:00.000Z' },
     { id: 'item-3', owner_id: 'student-2', item_name: 'Green knit scarf', category: 'Wearables', description: 'Soft sage scarf with a narrow cream stripe at each end.', qr_token: 'RL-9P3F6T2L', status: 'returned', created_at: '2025-01-18T15:42:00.000Z' },
-    { id: 'item-4', owner_id: 'student-2', item_name: 'Calculus notebook', category: 'Study', description: 'Black dotted notebook marked with a small white star on the cover.', qr_token: 'RL-5H8Q2B7R', status: 'registered', created_at: '2025-02-10T12:04:00.000Z' },
+    { id: 'item-4', owner_id: 'student-2', item_name: 'Calculus notebook', category: 'Study', description: 'Black dotted notebook marked with a small white star on the cover.', qr_token: 'RL-5H8Q2B7R', status: 'lost', created_at: '2025-02-10T12:04:00.000Z' },
+    { id: 'item-5', owner_id: 'student-3', item_name: 'Red wireless earbuds', category: 'Tech', description: 'Compact red charging case with a tiny silver scratch on the lid.', qr_token: 'RL-2M7C8V4N', status: 'lost', created_at: '2025-02-14T08:30:00.000Z' },
+    { id: 'item-6', owner_id: 'student-3', item_name: 'Green steel bottle', category: 'Personal', description: 'Matte green bottle with a black loop cap and a small campus sticker.', qr_token: 'RL-6P4T9K2W', status: 'found', created_at: '2025-02-11T13:15:00.000Z' },
   ],
   reports: [
     { id: 'report-1', item_id: 'item-2', finder_name: 'Jordan Lee', finder_contact: 'jordan.lee@northfield.edu', found_location: 'West Library, level 2', found_date: '2025-02-12', message: 'It is safe with the library desk. I left it beside the returns slot.', status: 'new', created_at: '2025-02-12T16:20:00.000Z' },
@@ -58,7 +61,11 @@ const seed: Db = {
 function loadDb(): Db {
   try {
     const raw = localStorage.getItem(DB_KEY);
-    return raw ? JSON.parse(raw) as Db : seed;
+    const stored = raw ? JSON.parse(raw) as Db : seed;
+    return {
+      ...stored,
+      items: stored.items.map((item) => ({ ...item, status: item.status === 'registered' ? 'lost' : item.status === 'reported' ? 'found' : item.status } as Item)),
+    };
   } catch { return seed; }
 }
 
@@ -66,9 +73,12 @@ type Store = {
   db: Db;
   session: string | null;
   signIn: (id: string) => void;
+  signInWithEmail: (email: string, password: string) => { ok: boolean; error?: string };
+  createAccount: (profile: Omit<Profile, 'id' | 'role'>, password: string) => { ok: boolean; error?: string };
+  signOut: () => void;
   addItem: (item: Item) => void;
   addReport: (report: Report) => void;
-  markReturned: (itemId: string) => void;
+  updateItemStatus: (itemId: string, status: Status) => void;
   markRead: (id: string) => void;
   profile: Profile | undefined;
 };
@@ -84,13 +94,38 @@ function StoreProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<string | null>(() => localStorage.getItem(SESSION_KEY));
   useEffect(() => { localStorage.setItem(DB_KEY, JSON.stringify(db)); }, [db]);
   useEffect(() => { if (session) localStorage.setItem(SESSION_KEY, session); else localStorage.removeItem(SESSION_KEY); }, [session]);
+  useEffect(() => {
+    const sync = (event: StorageEvent) => {
+      if (event.key === DB_KEY && event.newValue) {
+        try { setDb(JSON.parse(event.newValue) as Db); } catch { /* keep current state */ }
+      }
+    };
+    window.addEventListener('storage', sync);
+    return () => window.removeEventListener('storage', sync);
+  }, []);
   const profile = db.profiles.find((p) => p.id === session);
   const value: Store = {
     db, session, profile,
     signIn: (id) => setSession(id),
+    signInWithEmail: (email, password) => {
+      const candidate = db.profiles.find((entry) => entry.email.toLowerCase() === email.trim().toLowerCase());
+      if (!candidate || password.length < 6) return { ok: false, error: 'Use a registered campus email and a password with at least 6 characters.' };
+      setSession(candidate.id);
+      return { ok: true };
+    },
+    createAccount: (newProfile, password) => {
+      if (password.length < 6) return { ok: false, error: 'Choose a password with at least 6 characters.' };
+      if (db.profiles.some((entry) => entry.email.toLowerCase() === newProfile.email.trim().toLowerCase())) return { ok: false, error: 'An account with that campus email already exists.' };
+      const id = `student-${Date.now()}`;
+      setDb((current) => ({ ...current, profiles: [...current.profiles, { ...newProfile, id, role: 'student' }] }));
+      setSession(id);
+      return { ok: true };
+    },
+    signOut: () => setSession(null),
     addItem: (item) => setDb((current) => ({ ...current, items: [item, ...current.items], notifications: [{ id: `note-${Date.now()}`, recipient_user_id: item.owner_id, item_id: item.id, title: 'Your item is protected', message: `${item.item_name} is now registered with ReturnLoop.`, notification_type: 'registered', is_read: true, created_at: new Date().toISOString() }, ...current.notifications] })),
     addReport: (report) => setDb((current) => {
       const item = current.items.find((entry) => entry.id === report.item_id);
+      if (!item || current.reports.some((entry) => entry.item_id === report.item_id && entry.status !== 'returned')) return current;
       const timestamp = new Date().toISOString();
       const ownerNotification: Notice = {
         id: `note-owner-${Date.now()}`,
@@ -117,11 +152,31 @@ function StoreProvider({ children }: { children: ReactNode }) {
       return {
         ...current,
         reports: [report, ...current.reports],
-        items: current.items.map((entry) => entry.id === report.item_id ? { ...entry, status: 'reported' } : entry),
+        items: current.items.map((entry) => entry.id === report.item_id ? { ...entry, status: 'found' } : entry),
         notifications: [...teacherNotifications, ownerNotification, ...current.notifications],
       };
     }),
-    markReturned: (itemId) => setDb((current) => ({ ...current, items: current.items.map((item) => item.id === itemId ? { ...item, status: 'returned' } : item), reports: current.reports.map((report) => report.item_id === itemId ? { ...report, status: 'returned' } : report) })),
+    updateItemStatus: (itemId, status) => setDb((current) => {
+      const item = current.items.find((entry) => entry.id === itemId);
+      if (!item || item.status === status) return current;
+      const timestamp = new Date().toISOString();
+      const notices = status === 'returned' ? [{
+        id: `note-returned-${Date.now()}`,
+        recipient_user_id: item.owner_id,
+        item_id: item.id,
+        title: `${item.item_name} was marked returned`,
+        message: 'This item has been closed out in the ReturnLoop handoff.',
+        notification_type: 'returned',
+        is_read: false,
+        created_at: timestamp,
+      } satisfies Notice] : [];
+      return {
+        ...current,
+        items: current.items.map((entry) => entry.id === itemId ? { ...entry, status } : entry),
+        reports: status === 'returned' ? current.reports.map((report) => report.item_id === itemId ? { ...report, status: 'returned' } : report) : current.reports,
+        notifications: [...notices, ...current.notifications],
+      };
+    }),
     markRead: (id) => setDb((current) => ({ ...current, notifications: current.notifications.map((n) => n.id === id ? { ...n, is_read: true } : n) })),
   };
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
@@ -176,7 +231,7 @@ function DashboardShell({ children, active = 'home' }: { children: ReactNode; ac
           <SideLink href="/app" active={active === 'home'} icon={Home}>Overview</SideLink>
           <SideLink href="/app/new" active={active === 'new'} icon={Plus}>Register an item</SideLink>
           <SideLink href="/scan" active={active === 'scan'} icon={ScanLine}>Scan a code</SideLink>
-        </div><div className="mt-9 space-y-1"><p className="mb-3 px-3 text-[10px] font-bold uppercase tracking-[.16em] text-[hsl(var(--sidebar-foreground)/.46)]">Account</p><SideLink href="/profile" active={active === 'profile'} icon={UserRound}>Profile & privacy</SideLink></div>
+         </div><div className="mt-9 space-y-1"><p className="mb-3 px-3 text-[10px] font-bold uppercase tracking-[.16em] text-[hsl(var(--sidebar-foreground)/.46)]">Account</p><SideLink href="/notifications" active={active === 'notifications'} icon={Bell}>Notifications</SideLink><SideLink href="/profile" active={active === 'profile'} icon={UserRound}>Profile & privacy</SideLink></div>
         </div>
         <div className="rounded-2xl border border-[hsl(var(--sidebar-border))] bg-[hsl(var(--sidebar-accent)/.65)] p-3"><div className="mb-2 flex items-center gap-2"><span className="grid h-7 w-7 place-items-center rounded-full bg-[hsl(var(--secondary))] text-xs font-bold text-[hsl(var(--primary))]">{profile?.full_name.split(' ').map((n) => n[0]).join('')}</span><span className="truncate text-xs font-semibold">{profile?.full_name}</span></div><p className="text-[11px] leading-4 text-[hsl(var(--sidebar-foreground)/.56)]">A quiet safety net for campus life.</p></div>
       </aside>
@@ -211,11 +266,34 @@ function Feature({ icon: Icon, title, text, tone }: { icon: typeof ShieldCheck; 
 
 function AuthPage() {
   const [, setLocation] = useLocation();
-  const { signIn } = useStore();
+  const { signIn, signInWithEmail, createAccount } = useStore();
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
-  const submit = (event: React.FormEvent) => { event.preventDefault(); signIn('student-1'); setLocation('/app'); };
-  return <div className="rl-noise min-h-[100dvh] bg-[hsl(var(--background))]"><TopBar action={<Link href="/" data-testid="link-auth-back" className="text-sm font-semibold text-[hsl(var(--muted-foreground))]">Back to home</Link>} /><main className="mx-auto grid max-w-[1050px] items-center gap-12 px-5 py-12 sm:px-8 lg:grid-cols-[.85fr_1fr] lg:py-20"><div className="animate-in-up"><Pill tone="green"><LockKeyhole size={13} /> Made for your campus</Pill><h1 className="mt-6 max-w-md font-display text-5xl font-extrabold leading-[.95] tracking-[-.06em] text-[hsl(var(--primary))]">Keep the things that keep <span className="text-[hsl(var(--secondary))]">you</span> going.</h1><p className="mt-5 max-w-sm leading-7 text-[hsl(var(--muted-foreground))]">Sign in to register a new item, see a finder’s note, or help something else find its way home.</p><div className="mt-8 flex items-center gap-3 text-xs text-[hsl(var(--muted-foreground))]"><ShieldCheck size={16} className="text-[hsl(var(--secondary))]" /> Your identity stays private on every tag.</div></div><div className="rounded-[1.75rem] border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-5 shadow-[0_24px_80px_hsl(var(--primary)/.08)] sm:p-8"><div className="flex rounded-xl bg-[hsl(var(--muted)/.7)] p-1"><button onClick={() => setMode('signin')} data-testid="button-auth-signin-tab" className={`flex-1 rounded-lg py-2 text-sm font-bold ${mode === 'signin' ? 'bg-[hsl(var(--card))] text-[hsl(var(--foreground))] shadow-sm' : 'text-[hsl(var(--muted-foreground))]'}`}>Sign in</button><button onClick={() => setMode('signup')} data-testid="button-auth-signup-tab" className={`flex-1 rounded-lg py-2 text-sm font-bold ${mode === 'signup' ? 'bg-[hsl(var(--card))] text-[hsl(var(--foreground))] shadow-sm' : 'text-[hsl(var(--muted-foreground))]'}`}>Create account</button></div><form onSubmit={submit} className="mt-7 space-y-4"><div><label className="mb-1.5 block text-xs font-bold text-[hsl(var(--foreground))]">Campus email</label><input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required placeholder="you@northfield.edu" data-testid="input-auth-email" className="w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-4 py-3 text-sm outline-none transition focus:border-[hsl(var(--secondary))] focus:ring-4 focus:ring-[hsl(var(--secondary)/.12)]" /></div>{mode === 'signup' && <div><label className="mb-1.5 block text-xs font-bold">Your full name</label><input required placeholder="Aryan Mishra" data-testid="input-auth-name" className="w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-4 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]" /></div>}<div><label className="mb-1.5 block text-xs font-bold">{mode === 'signin' ? 'Password' : 'Create a password'}</label><input required type="password" placeholder="••••••••" data-testid="input-auth-password" className="w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-4 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]" /></div><Button type="submit" className="mt-2 w-full" data-testid="button-auth-submit">{mode === 'signin' ? 'Sign in to ReturnLoop' : 'Create my account'} <ArrowRight size={16} /></Button></form><div className="my-6 flex items-center gap-3 text-[10px] uppercase tracking-[.16em] text-[hsl(var(--muted-foreground))]"><span className="h-px flex-1 bg-[hsl(var(--border))]" /> Quick entry <span className="h-px flex-1 bg-[hsl(var(--border))]" /></div><Button variant="outline" className="w-full" onClick={() => { signIn('teacher-1'); setLocation('/admin'); }} data-testid="button-teacher-demo"><BookOpen size={16} /> Enter teacher demo</Button><button onClick={() => { signIn('student-1'); setLocation('/app'); }} data-testid="button-try-demo-auth" className="mt-4 flex w-full items-center justify-center gap-1 text-xs font-bold text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--primary))]">Try Aryan’s student demo <ChevronRight size={14} /></button></div></main></div>;
+  const [name, setName] = useState('');
+  const [studentId, setStudentId] = useState('');
+  const [course, setCourse] = useState('');
+  const [section, setSection] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
+    setError('');
+    if (mode === 'signup' && password !== confirmPassword) { setError('Passwords do not match.'); return; }
+    setLoading(true);
+    window.setTimeout(() => {
+      const result = mode === 'signin'
+        ? signInWithEmail(email, password)
+        : createAccount({ full_name: name.trim(), email: email.trim(), student_id: studentId.trim(), course_or_class: course.trim(), section: section.trim() }, password);
+      setLoading(false);
+      if (!result.ok) { setError(result.error ?? 'We could not complete that request.'); return; }
+      setLocation('/app');
+    }, 260);
+  };
+  const setDemo = (id: string, destination: string) => { signIn(id); setLocation(destination); };
+  return <div className="rl-noise min-h-[100dvh] bg-[hsl(var(--background))]"><TopBar action={<Link href="/" data-testid="link-auth-back" className="text-sm font-semibold text-[hsl(var(--muted-foreground))]">Back to home</Link>} /><main className="mx-auto grid max-w-[1050px] items-center gap-12 px-5 py-12 sm:px-8 lg:grid-cols-[.85fr_1fr] lg:py-20"><div className="animate-in-up"><Pill tone="green"><LockKeyhole size={13} /> Made for your campus</Pill><h1 className="mt-6 max-w-md font-display text-5xl font-extrabold leading-[.95] tracking-[-.06em] text-[hsl(var(--primary))]">Keep the things that keep <span className="text-[hsl(var(--secondary))]">you</span> going.</h1><p className="mt-5 max-w-sm leading-7 text-[hsl(var(--muted-foreground))]">Sign in to register a new item, see a finder’s note, or help something else find its way home.</p><div className="mt-8 flex items-center gap-3 text-xs text-[hsl(var(--muted-foreground))]"><ShieldCheck size={16} className="text-[hsl(var(--secondary))]" /> Your identity stays private on every tag.</div></div><div className="rounded-[1.75rem] border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-5 shadow-[0_24px_80px_hsl(var(--primary)/.08)] sm:p-8"><div className="flex rounded-xl bg-[hsl(var(--muted)/.7)] p-1"><button type="button" onClick={() => { setMode('signin'); setError(''); }} data-testid="button-auth-signin-tab" className={`flex-1 rounded-lg py-2 text-sm font-bold ${mode === 'signin' ? 'bg-[hsl(var(--card))] text-[hsl(var(--foreground))] shadow-sm' : 'text-[hsl(var(--muted-foreground))]'}`}>Sign in</button><button type="button" onClick={() => { setMode('signup'); setError(''); }} data-testid="button-auth-signup-tab" className={`flex-1 rounded-lg py-2 text-sm font-bold ${mode === 'signup' ? 'bg-[hsl(var(--card))] text-[hsl(var(--foreground))] shadow-sm' : 'text-[hsl(var(--muted-foreground))]'}`}>Create account</button></div><form onSubmit={submit} className="mt-7 space-y-4"><div><label className="mb-1.5 block text-xs font-bold text-[hsl(var(--foreground))]">Campus email</label><input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required placeholder="you@northfield.edu" data-testid="input-auth-email" className="w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-4 py-3 text-sm outline-none transition focus:border-[hsl(var(--secondary))] focus:ring-4 focus:ring-[hsl(var(--secondary)/.12)]" /></div>{mode === 'signup' && <><div><label className="mb-1.5 block text-xs font-bold">Your full name</label><input value={name} onChange={(e) => setName(e.target.value)} required placeholder="Aryan Mishra" data-testid="input-auth-name" className="w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-4 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]" /></div><div className="grid gap-4 sm:grid-cols-2"><div><label className="mb-1.5 block text-xs font-bold">Student ID</label><input value={studentId} onChange={(e) => setStudentId(e.target.value)} required placeholder="NF-25-204" data-testid="input-auth-student-id" className="w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-4 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]" /></div><div><label className="mb-1.5 block text-xs font-bold">Section</label><input value={section} onChange={(e) => setSection(e.target.value)} required placeholder="A" data-testid="input-auth-section" className="w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-4 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]" /></div></div><div><label className="mb-1.5 block text-xs font-bold">Course / class</label><input value={course} onChange={(e) => setCourse(e.target.value)} required placeholder="Computer Science" data-testid="input-auth-course" className="w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-4 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]" /></div></>}<div><label className="mb-1.5 block text-xs font-bold">{mode === 'signin' ? 'Password' : 'Create a password'}</label><div className="relative"><input value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6} type={showPassword ? 'text' : 'password'} placeholder="At least 6 characters" data-testid="input-auth-password" className="w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-4 py-3 pr-12 text-sm outline-none focus:border-[hsl(var(--secondary))]" /><button type="button" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? 'Hide password' : 'Show password'} className="absolute right-3 top-1/2 -translate-y-1/2 text-[hsl(var(--muted-foreground))]">{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div></div>{mode === 'signup' && <div><label className="mb-1.5 block text-xs font-bold">Confirm password</label><input value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} required minLength={6} type={showPassword ? 'text' : 'password'} placeholder="Repeat your password" data-testid="input-auth-confirm-password" className="w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-4 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]" /></div>}{error && <div role="alert" className="flex items-start gap-2 rounded-xl bg-[hsl(var(--destructive)/.1)] p-3 text-xs leading-5 text-[hsl(var(--destructive))]"><CircleAlert size={16} className="mt-0.5 shrink-0" />{error}</div>}<Button type="submit" disabled={loading} className="mt-2 w-full" data-testid="button-auth-submit">{loading ? <><RefreshCw size={16} className="animate-spin" /> Working…</> : <>{mode === 'signin' ? 'Sign in to ReturnLoop' : 'Create my account'} <ArrowRight size={16} /></>}</Button></form><div className="my-6 flex items-center gap-3 text-[10px] uppercase tracking-[.16em] text-[hsl(var(--muted-foreground))]"><span className="h-px flex-1 bg-[hsl(var(--border))]" /> Demo entry <span className="h-px flex-1 bg-[hsl(var(--border))]" /></div><div className="grid gap-2 sm:grid-cols-2"><Button variant="outline" className="w-full" onClick={() => setDemo('teacher-1', '/admin')} data-testid="button-teacher-demo"><BookOpen size={16} /> Teacher</Button><Button variant="outline" className="w-full" onClick={() => setDemo('student-1', '/app')} data-testid="button-try-demo-auth"><UserRound size={16} /> Aryan</Button></div><div className="mt-2 grid gap-2 sm:grid-cols-2"><Button variant="ghost" className="w-full text-xs" onClick={() => setDemo('student-2', '/app')} data-testid="button-anunay-demo">Anunay <ChevronRight size={14} /></Button><Button variant="ghost" className="w-full text-xs" onClick={() => setDemo('student-3', '/app')} data-testid="button-adarsh-demo">Adarsh <ChevronRight size={14} /></Button></div></div></main></div>;
 }
 
 function AccessGate() {
@@ -225,20 +303,44 @@ function AccessGate() {
 }
 
 function StudentDashboard() {
+  const { db, profile } = useStore();
+  if (!profile) return <AccessGate />;
+  const items = db.items.filter((item) => item.owner_id === profile.id);
+  const notes = db.notifications.filter((note) => note.recipient_user_id === profile.id);
+  const count = (status: Status) => items.filter((item) => item.status === status).length;
+  return <DashboardShell active="home"><div className="mx-auto max-w-[1180px] px-5 py-6 sm:px-8 md:py-9 lg:px-12">
+    <div className="flex items-start justify-between gap-4"><div><Pill tone="green"><span className="h-1.5 w-1.5 rounded-full bg-[hsl(var(--secondary))]" /> Campus loop is active</Pill><h1 className="mt-4 font-display text-3xl font-bold tracking-[-.04em] sm:text-4xl">Good to see you, <span className="text-[hsl(var(--secondary))]">{profile.full_name.split(' ')[0]}.</span></h1><p className="mt-2 text-sm text-[hsl(var(--muted-foreground))]">Here’s the quiet status of your things.</p></div><div className="flex items-center gap-2"><Link href="/notifications" className="grid h-10 w-10 place-items-center rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--primary))]"><Bell size={17} /></Link><Link href="/profile" data-testid="link-dashboard-profile" className="grid h-10 w-10 place-items-center rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-sm font-bold text-[hsl(var(--primary))]">{profile.full_name.split(' ').map((part) => part[0]).join('')}</Link></div></div>
+    <div className="mt-8 grid grid-cols-2 gap-3 lg:grid-cols-4"><Stat label="Total items" value={items.length.toString()} icon={Package} /><Stat label="Lost / active" value={count('lost').toString()} icon={Search} accent={count('lost') > 0} /><Stat label="Found" value={count('found').toString()} icon={Bell} accent={count('found') > 0} /><Stat label="Returned" value={count('returned').toString()} icon={HeartHandshake} /></div>
+    <div className="mt-10 grid gap-8 lg:grid-cols-[1.4fr_.8fr]"><section><div className="flex items-end justify-between"><div><p className="font-mono-app text-[10px] uppercase tracking-[.17em] text-[hsl(var(--muted-foreground))]">Your belongings</p><h2 className="mt-2 font-display text-2xl font-bold">Protected, not tracked.</h2></div><Link href="/app/new" className="flex items-center gap-1 text-xs font-bold text-[hsl(var(--primary))]">Add item <Plus size={15} /></Link></div><div className="mt-5 space-y-3">{items.length ? items.map((item) => <ItemRow key={item.id} item={item} />) : <EmptyState text="No items yet. Register your first item to create a private QR code." />}</div></section><section><div className="flex items-end justify-between"><div><p className="font-mono-app text-[10px] uppercase tracking-[.17em] text-[hsl(var(--muted-foreground))]">Recent notes</p><h2 className="mt-2 font-display text-2xl font-bold">From your loop</h2></div><Link href="/notifications" className="text-xs font-bold text-[hsl(var(--primary))]">View all</Link></div><div className="mt-5 space-y-3">{notes.length ? notes.slice(0, 4).map((note) => <NotificationCard key={note.id} note={note} />) : <EmptyState text="No notes yet. That’s a good sign." />}</div></section></div>
+  </div></DashboardShell>;
+}
+/*
+function LegacyStudentDashboard() {
   const { db, profile, markRead } = useStore();
   if (!profile) return <AccessGate />;
   const items = db.items.filter((i) => i.owner_id === profile.id);
   const notes = db.notifications.filter((n) => n.recipient_user_id === profile.id);
-  const found = items.filter((i) => i.status === 'reported').length;
-  return <DashboardShell active="home"><div className="mx-auto max-w-[1180px] px-5 py-6 sm:px-8 md:py-9 lg:px-12"><div className="flex items-start justify-between gap-4"><div><Pill tone="green"><span className="h-1.5 w-1.5 rounded-full bg-[hsl(var(--secondary))]" /> Campus loop is active</Pill><h1 className="mt-4 font-display text-3xl font-bold tracking-[-.04em] sm:text-4xl">Good to see you, <span className="text-[hsl(var(--secondary))]">{profile.full_name.split(' ')[0]}.</span></h1><p className="mt-2 text-sm text-[hsl(var(--muted-foreground))]">Here’s the quiet status of your things.</p></div><div className="flex items-center gap-2"><Link href="/profile" data-testid="link-dashboard-profile" className="grid h-10 w-10 place-items-center rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-sm font-bold text-[hsl(var(--primary))]">{profile.full_name.split(' ').map((n) => n[0]).join('')}</Link><Link href="/profile" data-testid="link-dashboard-settings" className="hidden rounded-xl p-2 text-[hsl(var(--muted-foreground))] hover:bg-[hsl(var(--muted))] sm:block"><Settings size={19} /></Link></div></div><div className="mt-8 grid grid-cols-2 gap-3 lg:grid-cols-4"><Stat label="Protected items" value={items.length.toString()} icon={Package} /><Stat label="Needs your eye" value={found.toString()} icon={Bell} accent={found > 0} /><Stat label="Returned home" value={items.filter((i) => i.status === 'returned').toString()} icon={HeartHandshake} /><Stat label="Campus kindness" value="24" icon={Users} suffix=" this week" /></div><div className="mt-10 grid gap-8 lg:grid-cols-[1.4fr_.8fr]"><section><div className="flex items-end justify-between"><div><p className="font-mono-app text-[10px] uppercase tracking-[.17em] text-[hsl(var(--muted-foreground))]">Your belongings</p><h2 className="mt-2 font-display text-2xl font-bold">Protected, not tracked.</h2></div><Link href="/app/new" data-testid="link-dashboard-add" className="flex items-center gap-1 text-xs font-bold text-[hsl(var(--primary))] hover:text-[hsl(var(--secondary))]">Add item <Plus size={15} /></Link></div><div className="mt-5 space-y-3">{items.map((item) => <ItemRow key={item.id} item={item} />)}</div></section><section><div className="flex items-end justify-between"><div><p className="font-mono-app text-[10px] uppercase tracking-[.17em] text-[hsl(var(--muted-foreground))]">Recent notes</p><h2 className="mt-2 font-display text-2xl font-bold">From your loop</h2></div><span className="grid h-7 min-w-7 place-items-center rounded-full bg-[hsl(var(--accent)/.24)] px-2 text-xs font-bold">{notes.filter((n) => !n.is_read).length}</span></div><div className="mt-5 space-y-3">{notes.length === 0 ? <EmptyState text="No notes yet. That’s a good sign." /> : notes.slice(0, 4).map((note) => <button key={note.id} onClick={() => markRead(note.id)} data-testid={`button-notification-${note.id}`} className={`w-full rounded-2xl border p-4 text-left transition hover:border-[hsl(var(--secondary))] ${note.is_read ? 'border-[hsl(var(--border))] bg-[hsl(var(--card)/.4)]' : 'border-[hsl(var(--accent)/.6)] bg-[hsl(var(--accent)/.08)]'}`}><div className="flex gap-3"><span className={`mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg ${note.is_read ? 'bg-[hsl(var(--muted))]' : 'bg-[hsl(var(--accent)/.25)]'}`}><Bell size={15} /></span><div className="min-w-0"><div className="flex items-start justify-between gap-2"><p className="text-sm font-bold">{note.title}</p>{!note.is_read && <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-[hsl(var(--accent))]" />}</div><p className="mt-1 text-xs leading-5 text-[hsl(var(--muted-foreground))]">{note.message}</p><p className="mt-2 font-mono-app text-[10px] text-[hsl(var(--muted-foreground))]">{new Date(note.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</p></div></div></button>)}</div></section></div></div></DashboardShell>;
+  const found = items.filter((i) => i.status === 'found').length;
+  const lost = items.filter((i) => i.status === 'lost').length;
+  return <DashboardShell active="home"><div className="mx-auto max-w-[1180px] px-5 py-6 sm:px-8 md:py-9 lg:px-12"><div className="flex items-start justify-between gap-4"><div><Pill tone="green"><span className="h-1.5 w-1.5 rounded-full bg-[hsl(var(--secondary))]" /> Campus loop is active</Pill><h1 className="mt-4 font-display text-3xl font-bold tracking-[-.04em] sm:text-4xl">Good to see you, <span className="text-[hsl(var(--secondary))]">{profile.full_name.split(' ')[0]}.</span></h1><p className="mt-2 text-sm text-[hsl(var(--muted-foreground))]">Here’s the quiet status of your things.</p></div><div className="flex items-center gap-2"><Link href="/profile" data-testid="link-dashboard-profile" className="grid h-10 w-10 place-items-center rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-sm font-bold text-[hsl(var(--primary))]">{profile.full_name.split(' ').map((n) => n[0]).join('')}</Link><Link href="/profile" data-testid="link-dashboard-settings" className="hidden rounded-xl p-2 text-[hsl(var(--muted-foreground))] hover:bg-[hsl(var(--muted))] sm:block"><Settings size={19} /></Link></div></div><div className="mt-8 grid grid-cols-2 gap-3 lg:grid-cols-4"><Stat label="Total items" value={items.length.toString()} icon={Package} /><Stat label="Lost / active" value={lost.toString()} icon={Search} accent={lost > 0} /><Stat label="Found" value={found.toString()} icon={Bell} accent={found > 0} /><Stat label="Returned" value={items.filter((i) => i.status === 'returned').length.toString()} icon={HeartHandshake} /></div><div className="mt-10 grid gap-8 lg:grid-cols-[1.4fr_.8fr]"><section><div className="flex items-end justify-between"><div><p className="font-mono-app text-[10px] uppercase tracking-[.17em] text-[hsl(var(--muted-foreground))]">Your belongings</p><h2 className="mt-2 font-display text-2xl font-bold">Protected, not tracked.</h2></div><Link href="/app/new" data-testid="link-dashboard-add" className="flex items-center gap-1 text-xs font-bold text-[hsl(var(--primary))] hover:text-[hsl(var(--secondary))]">Add item <Plus size={15} /></Link></div><div className="mt-5 space-y-3">{items.length ? items.map((item) => <ItemRow key={item.id} item={item} />) : <EmptyState text="No items yet. Register your first item to create a private QR code." />}</div></section><section><div className="flex items-end justify-between"><div><p className="font-mono-app text-[10px] uppercase tracking-[.17em] text-[hsl(var(--muted-foreground))]">Recent notes</p><h2 className="mt-2 font-display text-2xl font-bold">From your loop</h2></div><Link href="/notifications" className="text-xs font-bold text-[hsl(var(--primary))]">View all</Link></div><div className="mt-5 space-y-3">{notes.length === 0 ? <EmptyState text="No notes yet. That’s a good sign." /> : notes.slice(0, 4).map((note) => <button key={note.id} onClick={() => markRead(note.id)} data-testid={`button-notification-${note.id}`} className={`w-full rounded-2xl border p-4 text-left transition hover:border-[hsl(var(--secondary))] ${note.is_read ? 'border-[hsl(var(--border))] bg-[hsl(var(--card)/.4)]' : 'border-[hsl(var(--accent)/.6)] bg-[hsl(var(--accent)/.08)]'}`}><div className="flex gap-3"><span className={`mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg ${note.is_read ? 'bg-[hsl(var(--muted))]' : 'bg-[hsl(var(--accent)/.25)]}`}><Bell size={15} /></span><div className="min-w-0"><div className="flex items-start justify-between gap-2"><p className="text-sm font-bold">{note.title}</p>{!note.is_read && <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-[hsl(var(--accent))]" />}</div><p className="mt-1 text-xs leading-5 text-[hsl(var(--muted-foreground))]">{note.message}</p><p className="mt-2 font-mono-app text-[10px] text-[hsl(var(--muted-foreground))]">{new Date(note.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</p></div></div></button>)}</div></section></div></div></DashboardShell>;
+}
+*/
+function NotificationCard({ note }: { note: Notice }) {
+  const { markRead } = useStore();
+  return <button onClick={() => markRead(note.id)} data-testid={`button-notification-${note.id}`} className={`w-full rounded-2xl border p-4 text-left transition hover:border-[hsl(var(--secondary))] ${note.is_read ? 'border-[hsl(var(--border))] bg-[hsl(var(--card)/.4)]' : 'border-[hsl(var(--accent)/.6)] bg-[hsl(var(--accent)/.08)]'}`}><div className="flex gap-3"><span className={`mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg ${note.is_read ? 'bg-[hsl(var(--muted))]' : 'bg-[hsl(var(--accent)/.25)]'}`}><Bell size={15} /></span><div className="min-w-0"><div className="flex items-start justify-between gap-2"><p className="text-sm font-bold">{note.title}</p>{!note.is_read && <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-[hsl(var(--accent))]" />}</div><p className="mt-1 text-xs leading-5 text-[hsl(var(--muted-foreground))]">{note.message}</p><p className="mt-2 font-mono-app text-[10px] text-[hsl(var(--muted-foreground))]">{new Date(note.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</p></div></div></button>;
 }
 function Stat({ label, value, icon: Icon, accent = false, suffix = '' }: { label: string; value: string; icon: typeof Package; accent?: boolean; suffix?: string }) {
   return <div className={`rounded-2xl border p-4 sm:p-5 ${accent ? 'border-[hsl(var(--accent)/.52)] bg-[hsl(var(--accent)/.1)]' : 'border-[hsl(var(--border))] bg-[hsl(var(--card)/.55)]'}`} data-testid={`stat-${label.toLowerCase().replace(/\s/g, '-')}`}><div className="flex items-start justify-between"><span className="text-xs font-medium text-[hsl(var(--muted-foreground))]">{label}</span><Icon size={16} className={accent ? 'text-[hsl(var(--accent))]' : 'text-[hsl(var(--secondary))]'} /></div><p className="mt-4 font-display text-3xl font-bold">{value}<span className="ml-1 text-xs font-sans font-medium text-[hsl(var(--muted-foreground))]">{suffix}</span></p></div>;
 }
 function ItemRow({ item }: { item: Item }) {
-  const status = item.status === 'reported' ? { label: 'Finder note', tone: 'amber' as const, icon: Bell } : item.status === 'returned' ? { label: 'Returned', tone: 'green' as const, icon: CheckCircle2 } : { label: 'Protected', tone: 'blue' as const, icon: ShieldCheck };
+  const status = item.status === 'found' ? { label: 'Found', tone: 'amber' as const, icon: Bell } : item.status === 'returned' ? { label: 'Returned', tone: 'green' as const, icon: CheckCircle2 } : { label: 'Lost / active', tone: 'blue' as const, icon: ShieldCheck };
   const Icon = status.icon;
-  return <div className="group flex items-center gap-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card)/.55)] p-3.5 transition hover:-translate-y-0.5 hover:border-[hsl(var(--secondary)/.7)] hover:shadow-md" data-testid={`card-item-${item.id}`}><span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[hsl(var(--primary))] text-[hsl(var(--secondary))]"><Package size={19} /></span><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold">{item.item_name}</p><p className="mt-1 font-mono-app text-[10px] tracking-wide text-[hsl(var(--muted-foreground))]">{item.qr_token}</p></div><Pill tone={status.tone}><Icon size={12} /> <span className="hidden sm:inline">{status.label}</span></Pill><Link href={`/found/${item.qr_token}`} data-testid={`link-item-token-${item.id}`} className="hidden rounded-lg p-2 text-[hsl(var(--muted-foreground))] transition hover:bg-[hsl(var(--muted))] hover:text-[hsl(var(--primary))] sm:block"><ExternalLink size={15} /></Link></div>;
+  return <div className="group flex flex-wrap items-center gap-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card)/.55)] p-3.5 transition hover:-translate-y-0.5 hover:border-[hsl(var(--secondary)/.7)] hover:shadow-md" data-testid={`card-item-${item.id}`}><span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[hsl(var(--primary))] text-[hsl(var(--secondary))]"><Package size={19} /></span><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold">{item.item_name}</p><p className="mt-1 font-mono-app text-[10px] tracking-wide text-[hsl(var(--muted-foreground))]">{item.qr_token}</p></div><Pill tone={status.tone}><Icon size={12} /> <span className="hidden sm:inline">{status.label}</span></Pill><ItemActions item={item} /><Link href={`/found/${item.qr_token}`} data-testid={`link-item-token-${item.id}`} className="rounded-lg p-2 text-[hsl(var(--muted-foreground))] transition hover:bg-[hsl(var(--muted))] hover:text-[hsl(var(--primary))]"><ExternalLink size={15} /></Link></div>;
+}
+function ItemActions({ item }: { item: Item }) {
+  const { updateItemStatus } = useStore();
+  const change = (status: Status, label: string) => { if (window.confirm(`${label} “${item.item_name}”?`)) updateItemStatus(item.id, status); };
+  return <div className="flex gap-1.5"><select aria-label={`Update status for ${item.item_name}`} value={item.status} onChange={(event) => { const status = event.target.value as Status; if (status !== item.status) change(status, status === 'found' ? 'Mark found' : status === 'lost' ? 'Mark lost / not found' : 'Mark returned'); }} className="max-w-[116px] rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-2 py-1.5 text-[11px] font-semibold outline-none focus:border-[hsl(var(--secondary))]" data-testid={`select-item-status-${item.id}`}><option value="lost">Lost / active</option><option value="found">Found</option><option value="returned">Returned</option></select></div>;
 }
 function EmptyState({ text }: { text: string }) { return <div className="rounded-2xl border border-dashed border-[hsl(var(--border))] p-7 text-center"><Inbox size={22} className="mx-auto text-[hsl(var(--muted-foreground))]" /><p className="mt-2 text-sm text-[hsl(var(--muted-foreground))]">{text}</p></div>; }
 

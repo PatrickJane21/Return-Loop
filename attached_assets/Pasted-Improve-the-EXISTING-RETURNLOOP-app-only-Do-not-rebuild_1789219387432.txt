@@ -1,0 +1,127 @@
+Improve the EXISTING RETURNLOOP app only. Do not rebuild it, create another Supabase project, or change the core QR/privacy concept.
+
+1. AUTH
+   Improve Sign In/Create Account UI:
+
+- Clean professional RETURNLOOP design
+- Email/password
+- Show/hide password
+- Confirm password during signup
+- Student ID, course/class, section during signup
+- Proper validation, loading and friendly errors
+- New accounts are STUDENT only; never allow public users to choose admin/teacher.
+
+2. DEMO PEOPLE
+   Add 2 additional demo students/users alongside the existing Aryan Mishra demo account.
+
+Create realistic demo data for all 3 students:
+
+- Arjan
+- Anunay
+- Adarsh
+
+Each should have registered items so the dashboard, teacher console, QR scanning and notification workflow can be demonstrated with different users.
+
+Keep teacher/admin as a separate protected role.
+
+3. ITEM ACTIONS
+   On authenticated item pages add REAL Supabase-backed actions:
+
+- MARK FOUND
+- MARK LOST / NOT FOUND
+- MARK RETURNED
+
+Show only logically valid actions for the current status. Use confirmation dialogs. Update Supabase and refresh immediately. Enforce permissions with RLS.
+
+4. STUDENT DASHBOARD
+   Make it practical and simple:
+
+- Welcome + student name
+- Total / Lost / Found / Returned counts
+- Register Item
+- Scan QR
+- My Items
+- Notifications
+- Recent Items with item name + status
+- Recent Notifications
+  Use useful empty states.
+
+5. TEACHER CONSOLE
+   Add a protected role-based Teacher/Admin console:
+   Overview, Students, All Items, Lost Items, Found Reports, Returned Items, Notifications.
+
+Show:
+Student, Student ID, Course/Class, Section, Item Name, Category, Found Location, Date/Time, Finder details if provided, Message, Status.
+
+Allow authorized teachers/admins to mark items Found, Lost or Returned. Enforce permissions with Supabase RLS.
+
+6. STUDENTS/RETURNED GLITCH
+   Fix the existing Students/Returned section so it displays the actual ITEM NAME.
+
+Use:
+items.owner_id → profiles.id
+found_reports.item_id → items.id
+
+Never show undefined, null, blank names or raw IDs.
+
+7. QR + NOTIFICATION ECOSYSTEM — IMPORTANT
+   Make the complete QR-to-notification flow REAL and functional.
+
+When a valid ReturnLoop QR is scanned:
+QR → random qr_token → Supabase item lookup → safe item page → "I FOUND THIS ITEM" → found report → item status FOUND → notifications.
+
+The scanner must:
+
+- Support camera QR scanning.
+- Request camera permission.
+- Extract the ReturnLoop ID/token.
+- Look up the item in Supabase.
+- Never expose owner identity publicly.
+- Keep manual ReturnLoop ID entry as a fallback.
+
+When the finder submits a valid Found Report:
+
+1. Save found_reports record.
+2. Change item status from LOST to FOUND.
+3. Create a notification for the item's owner.
+4. Create a notification for the teacher/admin.
+5. Use Supabase Realtime so notifications appear without manually refreshing.
+6. Show a clear success message to the finder.
+
+Owner notification example:
+"Your Blue Water Bottle may have been found."
+
+Teacher notification example:
+"New ReturnLoop Found Report — Blue Water Bottle."
+
+Make sure notifications are actually persisted in the notifications table and displayed in the correct user's dashboard.
+
+Do NOT create fake notification animations or frontend-only notifications.
+
+Prevent duplicate found reports where appropriate.
+
+8. NAVIGATION
+   Student:
+   Dashboard, My Items, Scan QR, Notifications, Profile, Logout.
+
+Teacher/Admin:
+Teacher Console, Students, All Items, Lost Items, Found Reports, Returned Items, Notifications, Logout.
+
+9. SECURITY
+   Keep Supabase RLS enabled.
+   Students can access only their own private information.
+   Teachers/admins can access authorized administrative information.
+   Public QR pages expose only safe item information.
+   Never expose service-role keys.
+
+10. FINAL CHECK
+    Test the actual complete flow:
+
+Student registers item
+→ QR generated
+→ QR scanned with camera
+→ safe item page
+→ finder submits report
+→ item becomes FOUND
+→ owner receives realtime notification
+→ teacher receive
