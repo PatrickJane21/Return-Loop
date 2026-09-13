@@ -1,0 +1,360 @@
+I am continuing development of my RETURNLOOP application.
+
+IMPORTANT:
+Before making any changes, FIRST inspect the current application and verify whether my existing Supabase project is already connected and actually being used by the application.
+
+Do NOT create a new Supabase project.
+Do NOT disconnect or replace my existing Supabase project.
+Do NOT rebuild working parts unnecessarily.
+
+==================================================
+1. VERIFY SUPABASE CONNECTION
+==================================================
+
+First check the current project configuration.
+
+I want you to verify:
+
+- Is Supabase connected?
+- Is the application actually using Supabase for its database/backend?
+- Is the correct Supabase Project URL configured?
+- Is the correct browser-safe Publishable/Anon key configured?
+- Are the current tables/data actually coming from Supabase?
+- Are authentication and database operations using Supabase?
+
+If Supabase is already connected correctly:
+→ KEEP the existing connection.
+
+If something is missing:
+→ Tell me exactly what is missing and what I need to configure.
+
+Do NOT ask me for or expose any Supabase secret/service-role key.
+
+==================================================
+2. REAL-TIME DATA FOR ALL USERS
+==================================================
+
+I want RETURNLOOP to behave like a real web application.
+
+If one user makes a change to the application data, the change should be stored in the central Supabase backend/database and become available to other users using the same deployed application.
+
+For example:
+
+User A registers a Blue Water Bottle.
+
+User B scans the QR code.
+
+User B should see the current information/status from the central database.
+
+If User B submits a FOUND report:
+
+→ The report should be saved to Supabase.
+→ The item's status should update.
+→ The owner should receive the notification.
+→ The teacher/admin should receive the notification.
+
+The data must NOT be stored only in localStorage or only on one device.
+
+Use Supabase as the central source of truth.
+
+Where appropriate, use Supabase Realtime so changes/notifications can appear without requiring users to manually refresh the page.
+
+IMPORTANT:
+The application is one deployed web/PWA application.
+Different users/devices opening the same application should use the same backend data.
+
+==================================================
+3. LOGOUT OPTION
+==================================================
+
+Add a proper:
+
+LOG OUT
+
+option inside the user's Profile/Account section.
+
+When the user clicks Log Out:
+
+→ Supabase authentication session should be terminated.
+→ User should be redirected to the login/home screen.
+→ Private account information should no longer be accessible.
+
+Make the logout option visually clear but not unnecessarily prominent.
+
+==================================================
+4. REMOVE/DELETE ITEM OPTION
+==================================================
+
+Add a way for a student to remove an item they previously registered.
+
+Example:
+
+I registered:
+
+Blue Water Bottle
+
+Later I don't want this item in my account anymore.
+
+I should be able to open the item and choose:
+
+REMOVE ITEM
+
+Ask for a confirmation before deleting it.
+
+Example confirmation:
+
+“Remove Blue Water Bottle?”
+
+“This will remove the item from your registered items.”
+
+[Cancel] [Remove Item]
+
+After confirmation:
+
+→ Remove the item from the student's item list.
+→ Update/delete its associated data appropriately.
+→ The old QR token must not accidentally become associated with a new item.
+→ Do not allow another student to access private information belonging to the deleted item.
+
+Only the item's owner should be able to remove their own item.
+
+If there are existing found reports/notifications associated with the item, handle them safely rather than leaving broken references.
+
+==================================================
+5. NORMAL ACCOUNT CREATION UI
+==================================================
+
+The account creation screen currently appears too pre-filled/customized.
+
+I want it to look like a normal modern application's signup/profile creation screen.
+
+Do NOT automatically show:
+
+“Aryan Mishra”
+or
+“CSE”
+
+as if those are fixed values.
+
+Instead, show normal input fields/placeholders such as:
+
+Create your account
+
+Full Name
+[ Enter your name ]
+
+Email
+[ Enter your email ]
+
+Student ID
+[ Enter your student ID ]
+
+Course/Class
+[ Enter your course or class ]
+
+Section
+[ Enter your section ]
+
+Password
+[ Create a password ]
+
+Confirm Password
+[ Confirm your password ]
+
+Then the user enters their own information.
+
+The form should feel like a normal professional application.
+
+Do not hard-code my personal information into the signup UI.
+
+Demo data can still exist separately for demonstration/testing.
+
+==================================================
+6. QR CODE MUST ACTUALLY WORK
+==================================================
+
+Please thoroughly verify the QR system.
+
+The QR code must contain a unique opaque/random ReturnLoop identifier or URL.
+
+It must NOT contain:
+
+- Student name
+- Student ID
+- Email
+- Phone number
+- Course
+- Section
+- Other private information
+
+Example QR destination:
+
+https://YOUR-RETURNLOOP-DOMAIN/item/<random-token>
+
+When someone scans the QR using their phone camera:
+
+→ It should open the ReturnLoop website.
+→ It should automatically identify the corresponding item.
+→ It should show the SAFE public item page.
+→ It must NOT reveal the owner's private information.
+
+The public page should show something like:
+
+RETURNLOOP
+
+Blue Water Bottle
+
+Category: Bottle
+
+Description: Blue insulated water bottle.
+
+Status: Lost
+
+[ I FOUND THIS ITEM ]
+
+==================================================
+7. FOUND ITEM FLOW
+==================================================
+
+When a finder scans a QR code and clicks:
+
+I FOUND THIS ITEM
+
+show a simple form:
+
+Finder Name (Optional)
+[ Enter your name ]
+
+Finder Contact (Optional)
+[ Phone/email if they want to provide it ]
+
+Where did you find it?
+[ Enter location ]
+
+When did you find it?
+[ Date/time ]
+
+Message (Optional)
+[ Add a message ]
+
+[ SUBMIT FOUND REPORT ]
+
+After submission:
+
+→ Save the report to Supabase.
+→ Change item status from LOST → FOUND.
+→ Notify the owner.
+→ Notify the teacher/admin.
+→ Update the teacher dashboard.
+→ Update the student's dashboard.
+
+==================================================
+8. QR REDIRECT MUST WORK ON REAL DEVICES
+==================================================
+
+Do not make the QR system work only inside the development environment.
+
+The generated QR should point to the actual deployed ReturnLoop URL.
+
+Example:
+
+https://returnloop-app.example/item/abc123
+
+When printed or shown on another phone, scanning it should open the deployed ReturnLoop application.
+
+Make sure the item route works after opening the URL directly.
+
+Do not rely on temporary localhost URLs for the final QR.
+
+==================================================
+9. SECURITY
+==================================================
+
+Keep Supabase Row Level Security enabled.
+
+Students must only access their own private account/items/notifications.
+
+A student must NOT be able to access another student's private information by changing an ID or URL.
+
+The public QR page should only expose safe item information.
+
+Teacher/admin can see the complete information required for administration.
+
+Never expose a Supabase secret/service-role key in frontend code.
+
+==================================================
+10. DO NOT BREAK EXISTING FEATURES
+==================================================
+
+Before changing anything:
+
+Inspect the current implementation.
+
+Keep working features such as:
+
+- Landing page
+- Student dashboard
+- Teacher dashboard
+- Item registration
+- QR generation
+- QR scanning
+- Found reports
+- Notifications
+- Authentication
+- Supabase integration
+
+Only modify what is necessary.
+
+After making changes, test the complete flow.
+
+==================================================
+11. FINAL TEST
+==================================================
+
+After implementation, verify this exact scenario:
+
+1. Create/login as a student.
+
+2. Enter normal account information manually.
+
+3. Register:
+Blue Water Bottle
+
+4. Generate QR.
+
+5. Open/scan the QR using another device or browser.
+
+6. Verify that the public page does NOT reveal the owner's private information.
+
+7. Click:
+I FOUND THIS ITEM
+
+8. Submit a found report.
+
+9. Verify that the report is saved to Supabase.
+
+10. Verify item status changes to FOUND.
+
+11. Verify owner notification appears.
+
+12. Verify teacher notification appears.
+
+13. Open teacher dashboard.
+
+14. Verify teacher can see the complete owner information.
+
+15. Mark item as RETURNED.
+
+16. Verify the student sees the updated RETURNED status.
+
+17. Test the REMOVE ITEM function.
+
+18. Test LOG OUT.
+
+19. Test that data remains available when another device/browser opens the same deployed application.
+
+20. Verify QR links still work correctly after deployment.
+
+IMPORTANT:
+Do not just make the UI look like these features exist.
+Actually implement and test the backend/database functionality through Supabase.
