@@ -290,13 +290,16 @@ function StudentDashboard() {
   const { db, profile, dismissReport } = useStore();
   const [itemSearch, setItemSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | Status>('all');
+  const [categoryFilter, setCategoryFilter] = useState<'all' | Category>('all');
   if (!profile) return <AccessGate />;
   const items = db.items.filter((item) => item.owner_id === profile.id);
   const visibleItems = items.filter((item) => {
     const query = itemSearch.trim().toLowerCase();
     const matchesSearch = [item.item_name, item.description, item.qr_token]
       .some((value) => value.toLowerCase().includes(query));
-    return matchesSearch && (statusFilter === 'all' || item.status === statusFilter);
+    return matchesSearch
+      && (statusFilter === 'all' || item.status === statusFilter)
+      && (categoryFilter === 'all' || item.category === categoryFilter);
   });
   const openReports = (itemId: string) => db.reports.filter((report) => report.item_id === itemId && !['returned', 'dismissed'].includes(report.status));
   const notes = db.notifications.filter((note) => note.recipient_user_id === profile.id);
@@ -329,7 +332,7 @@ function StudentDashboard() {
             </div>
             <Link href="/app/new" className="flex items-center gap-1 text-xs font-bold text-[hsl(var(--primary))]">Add item <Plus size={15} /></Link>
           </div>
-          {items.length > 0 && <div className="mt-5 grid gap-3 sm:grid-cols-[minmax(0,1fr)_180px]">
+          {items.length > 0 && <div className="mt-5 grid gap-3 sm:grid-cols-[minmax(0,1fr)_160px_160px]">
             <label className="flex min-w-0 items-center gap-2 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card)/.65)] px-3 focus-within:border-[hsl(var(--secondary))]">
               <Search size={16} className="shrink-0 text-[hsl(var(--muted-foreground))]" />
               <input value={itemSearch} onChange={(event) => setItemSearch(event.target.value)} type="search" aria-label="Search your items" placeholder="Search name, details, or QR code" className="min-w-0 flex-1 bg-transparent py-3 text-sm outline-none placeholder:text-[hsl(var(--muted-foreground))]" />
@@ -339,6 +342,14 @@ function StudentDashboard() {
               <option value="lost">Lost / active</option>
               <option value="found">Found</option>
               <option value="returned">Returned</option>
+            </select>
+            <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value as 'all' | Category)} aria-label="Filter items by category" className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card)/.65)] px-3 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]">
+              <option value="all">All categories</option>
+              <option value="Tech">Tech</option>
+              <option value="Study">Study</option>
+              <option value="Wearables">Wearables</option>
+              <option value="Personal">Personal</option>
+              <option value="Other">Other</option>
             </select>
           </div>}
           <div className="mt-5 space-y-3">
