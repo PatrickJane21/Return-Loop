@@ -288,16 +288,80 @@ function AccessGate() {
 
 function StudentDashboard() {
   const { db, profile, dismissReport } = useStore();
+  const [itemSearch, setItemSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | Status>('all');
   if (!profile) return <AccessGate />;
   const items = db.items.filter((item) => item.owner_id === profile.id);
+  const visibleItems = items.filter((item) => {
+    const query = itemSearch.trim().toLowerCase();
+    const matchesSearch = [item.item_name, item.description, item.qr_token]
+      .some((value) => value.toLowerCase().includes(query));
+    return matchesSearch && (statusFilter === 'all' || item.status === statusFilter);
+  });
   const openReports = (itemId: string) => db.reports.filter((report) => report.item_id === itemId && !['returned', 'dismissed'].includes(report.status));
   const notes = db.notifications.filter((note) => note.recipient_user_id === profile.id);
   const count = (status: Status) => items.filter((item) => item.status === status).length;
-  return <DashboardShell active="home"><div className="mx-auto max-w-[1180px] px-5 py-6 sm:px-8 md:py-9 lg:px-12">
-    <div className="flex items-start justify-between gap-4"><div><Pill tone="green"><span className="h-1.5 w-1.5 rounded-full bg-[hsl(var(--secondary))]" /> Campus loop is active</Pill><h1 className="mt-4 font-display text-3xl font-bold tracking-[-.04em] sm:text-4xl">Good to see you, <span className="text-[hsl(var(--secondary))]">{profile.full_name.split(' ')[0]}.</span></h1><p className="mt-2 text-sm text-[hsl(var(--muted-foreground))]">Here’s the quiet status of your things.</p></div><div className="flex items-center gap-2"><Link href="/notifications" className="grid h-10 w-10 place-items-center rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--primary))]"><Bell size={17} /></Link><Link href="/profile" data-testid="link-dashboard-profile" className="grid h-10 w-10 place-items-center rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-sm font-bold text-[hsl(var(--primary))]">{profile.full_name.split(' ').map((part) => part[0]).join('')}</Link></div></div>
-    <div className="mt-8 grid grid-cols-2 gap-3 lg:grid-cols-4"><Stat label="Total items" value={items.length.toString()} icon={Package} /><Stat label="Lost / active" value={count('lost').toString()} icon={Search} accent={count('lost') > 0} /><Stat label="Found" value={count('found').toString()} icon={Bell} accent={count('found') > 0} /><Stat label="Returned" value={count('returned').toString()} icon={HeartHandshake} /></div>
-    <div className="mt-10 grid gap-8 lg:grid-cols-[1.4fr_.8fr]"><section><div className="flex items-end justify-between"><div><p className="font-mono-app text-[10px] uppercase tracking-[.17em] text-[hsl(var(--muted-foreground))]">Your belongings</p><h2 className="mt-2 font-display text-2xl font-bold">Protected, not tracked.</h2></div><Link href="/app/new" className="flex items-center gap-1 text-xs font-bold text-[hsl(var(--primary))]">Add item <Plus size={15} /></Link></div><div className="mt-5 space-y-3">{items.length ? items.map((item) => <div key={item.id}><ItemRow item={item} />{openReports(item.id).map((report) => <OwnerReportCard key={report.id} report={report} onDismiss={() => { void dismissReport(report.id); }} />)}</div>) : <EmptyState text="No items yet. Register your first item to create a private QR code." />}</div></section><section><div className="flex items-end justify-between"><div><p className="font-mono-app text-[10px] uppercase tracking-[.17em] text-[hsl(var(--muted-foreground))]">Recent notes</p><h2 className="mt-2 font-display text-2xl font-bold">From your loop</h2></div><Link href="/notifications" className="text-xs font-bold text-[hsl(var(--primary))]">View all</Link></div><div className="mt-5 space-y-3">{notes.length ? notes.slice(0, 4).map((note) => <NotificationCard key={note.id} note={note} />) : <EmptyState text="No notes yet. That’s a good sign." />}</div></section></div>
-  </div></DashboardShell>;
+  return <DashboardShell active="home">
+    <div className="mx-auto max-w-[1180px] px-5 py-6 sm:px-8 md:py-9 lg:px-12">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <Pill tone="green"><span className="h-1.5 w-1.5 rounded-full bg-[hsl(var(--secondary))]" /> Campus loop is active</Pill>
+          <h1 className="mt-4 font-display text-3xl font-bold tracking-[-.04em] sm:text-4xl">Good to see you, <span className="text-[hsl(var(--secondary))]">{profile.full_name.split(' ')[0]}.</span></h1>
+          <p className="mt-2 text-sm text-[hsl(var(--muted-foreground))]">Here’s the quiet status of your things.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Link href="/notifications" className="grid h-10 w-10 place-items-center rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--primary))]"><Bell size={17} /></Link>
+          <Link href="/profile" data-testid="link-dashboard-profile" className="grid h-10 w-10 place-items-center rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-sm font-bold text-[hsl(var(--primary))]">{profile.full_name.split(' ').map((part) => part[0]).join('')}</Link>
+        </div>
+      </div>
+      <div className="mt-8 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Stat label="Total items" value={items.length.toString()} icon={Package} />
+        <Stat label="Lost / active" value={count('lost').toString()} icon={Search} accent={count('lost') > 0} />
+        <Stat label="Found" value={count('found').toString()} icon={Bell} accent={count('found') > 0} />
+        <Stat label="Returned" value={count('returned').toString()} icon={HeartHandshake} />
+      </div>
+      <div className="mt-10 grid gap-8 lg:grid-cols-[1.4fr_.8fr]">
+        <section>
+          <div className="flex items-end justify-between">
+            <div>
+              <p className="font-mono-app text-[10px] uppercase tracking-[.17em] text-[hsl(var(--muted-foreground))]">Your belongings</p>
+              <h2 className="mt-2 font-display text-2xl font-bold">Protected, not tracked.</h2>
+            </div>
+            <Link href="/app/new" className="flex items-center gap-1 text-xs font-bold text-[hsl(var(--primary))]">Add item <Plus size={15} /></Link>
+          </div>
+          {items.length > 0 && <div className="mt-5 grid gap-3 sm:grid-cols-[minmax(0,1fr)_180px]">
+            <label className="flex min-w-0 items-center gap-2 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card)/.65)] px-3 focus-within:border-[hsl(var(--secondary))]">
+              <Search size={16} className="shrink-0 text-[hsl(var(--muted-foreground))]" />
+              <input value={itemSearch} onChange={(event) => setItemSearch(event.target.value)} type="search" aria-label="Search your items" placeholder="Search name, details, or QR code" className="min-w-0 flex-1 bg-transparent py-3 text-sm outline-none placeholder:text-[hsl(var(--muted-foreground))]" />
+            </label>
+            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as 'all' | Status)} aria-label="Filter items by status" className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card)/.65)] px-3 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]">
+              <option value="all">All statuses</option>
+              <option value="lost">Lost / active</option>
+              <option value="found">Found</option>
+              <option value="returned">Returned</option>
+            </select>
+          </div>}
+          <div className="mt-5 space-y-3">
+            {items.length === 0
+              ? <EmptyState text="No items yet. Register your first item to create a private QR code." />
+              : visibleItems.length > 0
+                ? visibleItems.map((item) => <div key={item.id}><ItemRow item={item} />{openReports(item.id).map((report) => <OwnerReportCard key={report.id} report={report} onDismiss={() => { void dismissReport(report.id); }} />)}</div>)
+                : <EmptyState text="No items match this search and status filter." />}
+          </div>
+        </section>
+        <section>
+          <div className="flex items-end justify-between">
+            <div>
+              <p className="font-mono-app text-[10px] uppercase tracking-[.17em] text-[hsl(var(--muted-foreground))]">Recent notes</p>
+              <h2 className="mt-2 font-display text-2xl font-bold">From your loop</h2>
+            </div>
+            <Link href="/notifications" className="text-xs font-bold text-[hsl(var(--primary))]">View all</Link>
+          </div>
+          <div className="mt-5 space-y-3">{notes.length ? notes.slice(0, 4).map((note) => <NotificationCard key={note.id} note={note} />) : <EmptyState text="No notes yet. That’s a good sign." />}</div>
+        </section>
+      </div>
+    </div>
+  </DashboardShell>;
 }
 function NotificationCard({ note }: { note: Notice }) {
   const { markRead } = useStore();
