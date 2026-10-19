@@ -7,7 +7,7 @@ import {
   ArrowLeft, ArrowRight, BadgeCheck, Bell, BookOpen, Check, CheckCircle2, ChevronRight,
   Copy, Download, Eye, EyeOff, HeartHandshake, Home, KeyRound, Link2, LockKeyhole, Package, Plus,
   QrCode, ScanLine, Search, Send, Settings, ShieldCheck, Sparkles, UserRound, Users, X,
-  ExternalLink, Inbox, CircleAlert, MoreHorizontal, Printer, LogOut, RefreshCw
+  ExternalLink, Inbox, CircleAlert, MoreHorizontal, Printer, LogOut, RefreshCw, Pencil
 } from 'lucide-react';
 import { Link, Route, Switch, useLocation, useParams, Router as WouterRouter } from 'wouter';
 import QRCode from 'qrcode';
@@ -37,6 +37,7 @@ type Store = {
   createAccount: (profile: { full_name: string; email: string; student_id: string; course_or_class: string; section: string }, password: string) => Promise<AuthResult>;
   signOut: () => Promise<void>;
   addItem: (input: { item_name: string; category: Category; description: string }) => Promise<{ item?: Item; error?: string }>;
+  updateItemDetails: (itemId: string, input: { item_name: string; category: Category; description: string }) => Promise<string | null>;
   updateItemStatus: (itemId: string, status: Status) => Promise<string | null>;
   markReturned: (itemId: string) => Promise<string | null>;
   dismissReport: (reportId: string) => Promise<string | null>;
@@ -132,6 +133,18 @@ function StoreProvider({ children }: { children: ReactNode }) {
       if (error || !data) return { error: error?.message ?? 'Could not save the item. Please try again.' };
       await load(userId);
       return { item: data as Item };
+    },
+    updateItemDetails: async (itemId, input) => {
+      if (!userId) return 'Please sign in again before editing this item.';
+      const { data, error } = await supabase.from('items')
+        .update({ item_name: input.item_name.trim(), category: input.category, description: input.description.trim() })
+        .eq('id', itemId)
+        .select('id')
+        .maybeSingle();
+      if (error) return error.message;
+      if (!data) return 'You can only edit your own items.';
+      await load(userId);
+      return null;
     },
     updateItemStatus: async (itemId, status) => {
       if (status === 'returned') return 'Only teachers can mark items as returned.';
@@ -384,7 +397,93 @@ function Stat({ label, value, icon: Icon, accent = false, suffix = '' }: { label
 function ItemRow({ item }: { item: Item }) {
   const status = item.status === 'found' ? { label: 'Found', tone: 'amber' as const, icon: Bell } : item.status === 'returned' ? { label: 'Returned', tone: 'green' as const, icon: CheckCircle2 } : { label: 'Lost / active', tone: 'blue' as const, icon: ShieldCheck };
   const Icon = status.icon;
-  return <div className="group flex flex-wrap items-center gap-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card)/.55)] p-3.5 transition hover:-translate-y-0.5 hover:border-[hsl(var(--secondary)/.7)] hover:shadow-md" data-testid={`card-item-${item.id}`}><span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[hsl(var(--primary))] text-[hsl(var(--secondary))]"><Package size={19} /></span><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold">{item.item_name}</p><p className="mt-1 font-mono-app text-[10px] tracking-wide text-[hsl(var(--muted-foreground))]">{item.qr_token}</p></div><Pill tone={status.tone}><Icon size={12} /> <span className="hidden sm:inline">{status.label}</span></Pill><ItemActions item={item} /><Link href={`/found/${item.qr_token}`} data-testid={`link-item-token-${item.id}`} className="rounded-lg p-2 text-[hsl(var(--muted-foreground))] transition hover:bg-[hsl(var(--muted))] hover:text-[hsl(var(--primary))]"><ExternalLink size={15} /></Link></div>;
+  return <div className="group flex flex-wrap items-center gap-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card)/.55)] p-3.5 transition hover:-translate-y-0.5 hover:border-[hsl(var(--secondary)/.7)] hover:shadow-md" data-testid={`card-item-${item.id}`}><span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[hsl(var(--primary))] text-[hsl(var(--secondary))]"><Package size={19} /></span><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold">{item.item_name}</p><p className="mt-1 font-mono-app text-[10px] tracking-wide text-[hsl(var(--muted-foreground))]">{item.qr_token}</p></div><Pill tone={status.tone}><Icon size={12} /> <span className="hidden sm:inline">{status.label}</span></Pill><ItemEditButton item={item} /><ItemActions item={item} /><Link href={`/found/${item.qr_token}`} data-testid={`link-item-token-${item.id}`} aria-label={`Open QR page for ${item.item_name}`} title="Open public QR page" className="rounded-lg p-2 text-[hsl(var(--muted-foreground))] transition hover:bg-[hsl(var(--muted))] hover:text-[hsl(var(--primary))]"><ExternalLink size={15} /></Link></div>;
+}
+function ItemEditButton({ item }: { item: Item }) {
+  const { updateItemDetails } = useStore();
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState(item.item_name);
+  const [category, setCategory] = useState<Category>(item.category);
+  const [description, setDescription] = useState(item.description);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !saving) setOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [open, saving]);
+
+  const edit = () => {
+    setName(item.item_name);
+    setCategory(item.category);
+    setDescription(item.description);
+    setError('');
+    setOpen(true);
+  };
+  const save = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!name.trim()) {
+      setError('Item name is required.');
+      return;
+    }
+    setSaving(true);
+    setError('');
+    const problem = await updateItemDetails(item.id, { item_name: name, category, description });
+    setSaving(false);
+    if (problem) {
+      setError(problem);
+      return;
+    }
+    setOpen(false);
+  };
+
+  return <>
+    <button type="button" onClick={edit} aria-label={`Edit ${item.item_name}`} title="Edit item details" data-testid={`button-edit-item-${item.id}`} className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-[hsl(var(--muted-foreground))] transition hover:bg-[hsl(var(--muted))] hover:text-[hsl(var(--primary))]">
+      <Pencil size={15} />
+    </button>
+    {open && <div className="fixed inset-0 z-50 grid place-items-center bg-[hsl(var(--primary)/.58)] p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setOpen(false); }}>
+      <section role="dialog" aria-modal="true" aria-labelledby={`edit-item-title-${item.id}`} className="max-h-[90dvh] w-full max-w-md overflow-auto rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-5 shadow-2xl sm:p-7">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="font-mono-app text-[10px] uppercase tracking-[.16em] text-[hsl(var(--muted-foreground))]">Keep your tag</p>
+            <h2 id={`edit-item-title-${item.id}`} className="mt-2 font-display text-2xl font-bold">Edit item details</h2>
+          </div>
+          <button type="button" onClick={() => setOpen(false)} disabled={saving} aria-label="Close edit form" className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-[hsl(var(--muted-foreground))] hover:bg-[hsl(var(--muted))] disabled:opacity-50"><X size={18} /></button>
+        </div>
+        <p className="mt-2 text-xs leading-5 text-[hsl(var(--muted-foreground))]">Your QR code and item status won’t change.</p>
+        <form onSubmit={save} className="mt-6 space-y-4">
+          <div>
+            <label htmlFor={`edit-item-name-${item.id}`} className="mb-1.5 block text-xs font-bold">Item name</label>
+            <input id={`edit-item-name-${item.id}`} value={name} onChange={(event) => setName(event.target.value)} required maxLength={100} autoFocus className="w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]" />
+          </div>
+          <div>
+            <label htmlFor={`edit-item-category-${item.id}`} className="mb-1.5 block text-xs font-bold">Category</label>
+            <select id={`edit-item-category-${item.id}`} value={category} onChange={(event) => setCategory(event.target.value as Category)} className="w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]">
+              <option value="Tech">Tech</option>
+              <option value="Study">Study</option>
+              <option value="Wearables">Wearables</option>
+              <option value="Personal">Personal</option>
+              <option value="Other">Other</option>
+            </select>
+          </div>
+          <div>
+            <label htmlFor={`edit-item-description-${item.id}`} className="mb-1.5 block text-xs font-bold">Details</label>
+            <textarea id={`edit-item-description-${item.id}`} value={description} onChange={(event) => setDescription(event.target.value)} maxLength={500} rows={4} className="w-full resize-y rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]" />
+            <p className="mt-1 text-right text-[10px] text-[hsl(var(--muted-foreground))]">{description.length}/500</p>
+          </div>
+          {error && <p role="alert" className="text-sm text-[hsl(var(--destructive))]">{error}</p>}
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={saving}>Cancel</Button>
+            <Button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save changes'}</Button>
+          </div>
+        </form>
+      </section>
+    </div>}
+  </>;
 }
 function ItemActions({ item }: { item: Item }) {
   const { updateItemStatus } = useStore();
