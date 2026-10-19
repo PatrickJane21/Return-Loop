@@ -134,6 +134,7 @@ function StoreProvider({ children }: { children: ReactNode }) {
       return { item: data as Item };
     },
     updateItemStatus: async (itemId, status) => {
+      if (status === 'returned') return 'Only teachers can mark items as returned.';
       const { error } = await supabase.from('items').update({ status }).eq('id', itemId);
       await load(userId);
       return error ? error.message : null;
@@ -314,7 +315,7 @@ function ItemRow({ item }: { item: Item }) {
 function ItemActions({ item }: { item: Item }) {
   const { updateItemStatus } = useStore();
   const change = async (status: Status, label: string) => { if (window.confirm(`${label} “${item.item_name}”?`)) { const problem = await updateItemStatus(item.id, status); if (problem) window.alert(problem); } };
-  return <div className="flex gap-1.5"><select aria-label={`Update status for ${item.item_name}`} value={item.status} onChange={(event) => { const status = event.target.value as Status; if (status !== item.status) change(status, status === 'found' ? 'Mark found' : status === 'lost' ? 'Mark lost / not found' : 'Mark returned'); }} className="max-w-[116px] rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-2 py-1.5 text-[11px] font-semibold outline-none focus:border-[hsl(var(--secondary))]" data-testid={`select-item-status-${item.id}`}><option value="lost">Lost / active</option><option value="found">Found</option><option value="returned">Returned</option></select></div>;
+  return <div className="flex gap-1.5"><select aria-label={`Update status for ${item.item_name}`} value={item.status} onChange={(event) => { const status = event.target.value as Status; if (status !== item.status) change(status, status === 'found' ? 'Mark found' : 'Mark lost / not found'); }} className="max-w-[116px] rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-2 py-1.5 text-[11px] font-semibold outline-none focus:border-[hsl(var(--secondary))]" data-testid={`select-item-status-${item.id}`}><option value="lost">Lost / active</option><option value="found">Found</option></select></div>;
 }
 function EmptyState({ text }: { text: string }) { return <div className="rounded-2xl border border-dashed border-[hsl(var(--border))] p-7 text-center"><Inbox size={22} className="mx-auto text-[hsl(var(--muted-foreground))]" /><p className="mt-2 text-sm text-[hsl(var(--muted-foreground))]">{text}</p></div>; }
 

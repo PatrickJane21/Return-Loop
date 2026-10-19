@@ -88,7 +88,10 @@ drop policy if exists "items_update_owner_or_teacher" on public.items;
 create policy "items_update_owner_or_teacher" on public.items
   for update to authenticated
   using (owner_id = (select auth.uid()) or public.returnloop_is_teacher())
-  with check (owner_id = (select auth.uid()) or public.returnloop_is_teacher());
+  with check (
+    public.returnloop_is_teacher()
+    or (owner_id = (select auth.uid()) and status <> 'returned')
+  );
 
 drop policy if exists "found_reports_read_owner_or_teacher" on public.found_reports;
 create policy "found_reports_read_owner_or_teacher" on public.found_reports
