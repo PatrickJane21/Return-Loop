@@ -126,7 +126,7 @@ function StoreProvider({ children }: { children: ReactNode }) {
     addItem: async (input) => {
       if (!userId) return { error: 'Please sign in again before registering an item.' };
       const { data, error } = await supabase.from('items')
-        .insert({ owner_id: userId, item_name: input.item_name.trim(), category: input.category, description: input.description.trim() })
+        .insert({ item_name: input.item_name.trim(), category: input.category, description: input.description.trim() })
         .select()
         .single();
       if (error || !data) return { error: error?.message ?? 'Could not save the item. Please try again.' };
@@ -140,10 +140,9 @@ function StoreProvider({ children }: { children: ReactNode }) {
       return error ? error.message : null;
     },
     markReturned: async (itemId) => {
-      const { data, error } = await supabase.rpc('returnloop_mark_returned', { p_item_id: itemId });
+      const { error } = await supabase.from('items').update({ status: 'returned' }).eq('id', itemId);
       await load(userId);
-      if (error) return error.message;
-      return data ? null : 'Only teachers can mark items as returned.';
+      return error ? error.message : null;
     },
     dismissReport: async (reportId) => {
       const report = db.reports.find((entry) => entry.id === reportId);

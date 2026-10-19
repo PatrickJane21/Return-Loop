@@ -1,43 +1,36 @@
 # ReturnLoop Supabase setup
 
-This project uses Supabase Auth, Postgres, Row Level Security, RPC functions, and Realtime. The frontend reads only the public project URL and publishable key. Never put a `service_role` key in Vercel or browser code.
+The existing Supabase project already has the initial ReturnLoop schema, policies, functions, and triggers. Its current SQL is the source of truth for table creation, profile creation, QR generation, found reports, and notifications. Do not run a second initial-schema script and do not create a replacement project.
 
-## Before changing the existing project
+## Follow-up migration
 
-The migration in `migrations/20261019000000_returnloop.sql` creates the tables and functions expected by the app. It uses `create table if not exists`, backfills missing profiles without overwriting existing profile rows, and does not delete application data. It also replaces policies with its own named policies and installs/replaces triggers and functions.
+The only follow-up SQL in this repository is `migrations/20261019000001_realtime_and_status_security.sql`. It assumes the existing setup has created `public.items`, `public.profiles`, `public.found_reports`, `public.notifications`, and `public.is_teacher()`.
 
-Before running it against an existing Supabase project, make a database backup and compare the existing `profiles`, `items`, `found_reports`, and `notifications` definitions, policies, triggers, and functions with the migration. Do not run it blindly if any of those objects already exist with a different schema or behavior. This repository does not contain the prior project's schema, so that compatibility cannot be confirmed here. Do not create a replacement Supabase project.
+It replaces only the existing `items_update` policy so a student cannot mark their item returned, and adds the existing app tables to `supabase_realtime`. It does not recreate tables, functions, or triggers. The current `on_item_status_change` trigger remains responsible for closing reports and notifying the owner when a teacher marks an item returned.
 
-If the existing project has no conflicting objects, open the existing project's SQL Editor, review the migration, then run it there. If objects differ, adapt the migration to that schema first. Applying SQL in the dashboard does not add it to Supabase's migration history; keep a record of what was applied.
+Before applying the follow-up SQL, make a database backup and confirm the existing policy is named `items_update` and the teacher helper is `public.is_teacher()`. If either name differs, adapt the follow-up first. In Supabase, use **SQL Editor** to review and run the follow-up migration once.
 
-## App configuration
+## Vercel configuration
 
-In Vercel, open the ReturnLoop project and set **Root Directory** to `artifacts/returnloop`. Keep files outside the root included. Vercel deploys Git commits, not uncommitted workspace edits: commit and push this branch, then merge it to `main` or configure the Production branch to the pushed branch containing these changes.
+Set the Vercel **Root Directory** to `artifacts/returnloop`, and keep files outside the root included. Vercel deploys Git commits, not uncommitted workspace edits: merge the `supabase-integration` branch to `main` after preview testing, or configure the Production branch to that branch.
 
-Add these Production environment variables in Vercel using values from the existing Supabase project's API settings:
+Add these environment variables for both Preview and Production, with values from the existing Supabase project's API settings:
 
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_PUBLISHABLE_KEY`
 
-Save and redeploy after changing variables. Vite embeds these public values in the client bundle; use only the publishable/anon key. Never use the database password or service-role key.
+Save and redeploy after changing variables. Vite embeds these public values in the client bundle; use only the publishable/anon key. Never put a database password or service-role key in Vercel or browser code.
 
-In Supabase Auth settings, set the site URL to the production Vercel URL and add it to the allowed redirect URLs. Keep email confirmation settings consistent with how you want signup to work.
+In Supabase Auth settings, set the site URL to the production Vercel URL and add it to the allowed redirect URLs. Keep email confirmation settings consistent with the desired signup behavior.
 
-The app grants new signups the `student` role. To provision a teacher, first let the teacher create and confirm their account. As a trusted project administrator, find that account's UUID and promote only that profile in the Supabase SQL Editor:
-
-```sql
-select id, email from auth.users where email = 'teacher@example.edu';
-update public.profiles set role = 'teacher' where id = 'PASTE-THAT-USER-UUID';
-```
-
-Never expose role editing to public signup.
+New accounts are students. To make a teacher, let them register and then, as a trusted database administrator, promote only that profile after verifying the account UUID. Never expose role editing to public signup.
 
 ## Verify
 
 1. Open `/` and `/auth` in a private browser window. Both should load the app, not Vercel's login or a 404.
-2. Create a student account and sign in. Confirm a profile is created and the dashboard loads.
-3. Register an item and confirm it appears after refreshing or signing in from another browser.
-4. Open the item's QR link in a signed-out browser, submit a found report, and confirm the owner sees a notification without refreshing.
-5. Promote a test account to teacher, sign in as that teacher, and test marking the item returned.
+2. Create a student account and sign in. Confirm the profile is created and the dashboard loads.
+3. Register an item and confirm it persists after refresh.
+4. Open its QR link while signed out, submit a found report, and confirm the owner receives a notification without refreshing.
+5. Test with a teacher account that returning an item closes open reports and sends the configured notification.
 
-The SQL migration enables Realtime for the app tables when the `supabase_realtime` publication is present. If it is configured differently in the existing project, verify the tables in Supabase's Realtime settings before testing live updates.
+The follow-up migration enables Realtime for profiles, items, found reports, and notifications. RLS still controls what each user can receive.
