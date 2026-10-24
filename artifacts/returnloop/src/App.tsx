@@ -17,6 +17,7 @@ import { SearchableSelect } from '@/components/searchable-select';
 import { OTHER_PROGRAM, OTHER_SPECIALIZATION, PROGRAM_OPTIONS, SECTION_OPTIONS } from '@/lib/signup-options';
 
 type Role = 'student' | 'teacher';
+type AccessRole = 'student' | 'teacher' | 'admin';
 type Status = 'lost' | 'found' | 'returned';
 type Category = 'Tech' | 'Study' | 'Wearables' | 'Personal' | 'Other';
 type Profile = { id: string; full_name: string; email: string; role: Role; student_id?: string | null; course_or_class?: string | null; section?: string | null; created_at: string };
@@ -34,6 +35,7 @@ const emptyDb: Db = { profiles: [], items: [], reports: [], notifications: [] };
 type Store = {
   db: Db;
   profile: Profile | undefined;
+  accessRole: AccessRole;
   loading: boolean;
   signInWithEmail: (email: string, password: string) => Promise<AuthResult>;
   createAccount: (profile: { full_name: string; email: string; student_id: string; course_or_class: string; section: string }, password: string) => Promise<AuthResult>;
@@ -60,15 +62,17 @@ function useStore() {
 function StoreProvider({ children }: { children: ReactNode }) {
   const [db, setDb] = useState<Db>(emptyDb);
   const [userId, setUserId] = useState<string | null>(null);
+  const [accessRole, setAccessRole] = useState<AccessRole>('student');
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async (uid: string | null) => {
     if (!uid) { setDb(emptyDb); return; }
-    const [p, i, r, n] = await Promise.all([
+    const [p, i, r, n, roleResult] = await Promise.all([
       supabase.from('profiles').select('*'),
       supabase.from('items').select('*').order('created_at', { ascending: false }),
       supabase.from('found_reports').select('*').order('created_at', { ascending: false }),
       supabase.from('notifications').select('*').order('created_at', { ascending: false }),
+      supabase.from('user_roles').select('role').eq('user_id', uid).maybeSingle(),
     ]);
     setDb({
       profiles: (p.data ?? []) as Profile[],
@@ -76,6 +80,8 @@ function StoreProvider({ children }: { children: ReactNode }) {
       reports: (r.data ?? []) as Report[],
       notifications: (n.data ?? []) as Notice[],
     });
+    const configuredRole = roleResult.data?.role;
+    setAccessRole(configuredRole === 'admin' || configuredRole === 'teacher' ? configuredRole : 'student');
   }, []);
 
   useEffect(() => {
@@ -112,7 +118,7 @@ function StoreProvider({ children }: { children: ReactNode }) {
   const profile = db.profiles.find((p) => p.id === userId);
 
   const value: Store = {
-    db, profile, loading,
+    db, profile, accessRole: accessRole === 'student' && profile?.role === 'teacher' ? 'teacher' : accessRole, loading,
     signInWithEmail: async (email, password) => {
       const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
       if (error) {
@@ -297,7 +303,7 @@ function Feature({ icon: Icon, title, text, tone }: { icon: typeof ShieldCheck; 
 
 function AuthPage() {
   const [location, setLocation] = useLocation();
-  const { profile, signInWithEmail, createAccount, resendSignupConfirmation, requestPasswordReset } = useStore();
+  const { profile, accessRole, signInWithEmail, createAccount, resendSignupConfirmation, requestPasswordReset } = useStore();
   const accessMode = location.endsWith('/teacher') ? 'teacher' : location.endsWith('/admin') ? 'admin' : 'student';
   const accessLabel = accessMode === 'teacher' ? 'Teacher access' : accessMode === 'admin' ? 'Admin access' : 'Student access';
   const [mode, setMode] = useState<"signin" | "signup">("signin");
@@ -330,8 +336,8 @@ function AuthPage() {
     specialization === OTHER_SPECIALIZATION ? customSpecialization.trim() : specialization,
   ].filter(Boolean).join(" — ");
   useEffect(() => {
-    if (profile) setLocation(profile.role === "teacher" ? "/admin" : "/app");
-  }, [profile, setLocation]);
+    if (profile) setLocation(accessRole === "admin" || accessRole === "teacher" ? "/admin" : "/app");
+  }, [profile, accessRole, setLocation]);
   const requestReset = async () => {
     if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
       setError("Enter your email address first.");
@@ -765,10 +771,11 @@ function AuthCallbackPage() {
           if (!error && data.session && completedUserId === data.session.user.id) {
             sessionStorage.removeItem(callbackMarkerKey);
             const { data: profile } = await supabase.from('profiles').select('role').eq('id', data.session.user.id).maybeSingle();
+            const { data: approvedRole } = await supabase.from('user_roles').select('role').eq('user_id', data.session.user.id).maybeSingle();
             if (!active) return;
             setState('success');
             setMessage('Email confirmed. Taking you to ReturnLoop…');
-            redirectTimer = setTimeout(() => setLocation(profile?.role === 'teacher' ? '/admin' : '/app'), 500);
+            redirectTimer = setTimeout(() => setLocation(approvedRole?.role === 'admin' || approvedRole?.role === 'teacher' || profile?.role === 'teacher' ? '/admin' : '/app'), 500);
             return;
           }
           throw new Error('This confirmation link is invalid or expired. Return to sign in and request a new one.');
@@ -805,12 +812,14 @@ function AuthCallbackPage() {
         if (userError) throw userError;
         sessionStorage.setItem(callbackMarkerKey, userData.user.id);
         const { data: profile } = await supabase.from('profiles').select('role').eq('id', userData.user.id).maybeSingle();
+        const { data: approvedRole } = await supabase.from('user_roles').select('role').eq('user_id', userData.user.id).maybeSingle();
         const destination = profile?.role === 'teacher' ? '/admin' : '/app';
+        const trustedDestination = approvedRole?.role === 'admin' || approvedRole?.role === 'teacher' || profile?.role === 'teacher' ? '/admin' : destination;
 
         if (!active) return;
         setState('success');
         setMessage('Email confirmed. Taking you to ReturnLoop…');
-        redirectTimer = setTimeout(() => setLocation(destination), 500);
+        redirectTimer = setTimeout(() => setLocation(trustedDestination), 500);
       } catch (error) {
         if (!active) return;
         const errorMessage = error instanceof Error ? error.message.toLowerCase() : '';
@@ -1203,12 +1212,12 @@ function FoundPage() {
 function Field({ label, value, setValue, placeholder, test, required }: { label: string; value: string; setValue: (value: string) => void; placeholder: string; test: string; required?: boolean }) { return <div><label className="mb-1.5 block text-xs font-bold">{label}</label><input value={value} onChange={(e) => setValue(e.target.value)} required={required} placeholder={placeholder} data-testid={test} className="w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]" /></div>; }
 
 function AdminPage() {
-  const { db, profile, markReturned, dismissReport } = useStore();
+  const { db, profile, accessRole, markReturned, dismissReport } = useStore();
   const [tab, setTab] = useState<"overview" | "items" | "students">("overview");
   const [reportSearch, setReportSearch] = useState("");
   const [reportStatus, setReportStatus] = useState<"all" | ReportStatus>("all");
   if (!profile) return <AccessGate />;
-  if (profile.role !== "teacher") return <TeachersOnly />;
+  if (accessRole !== "teacher" && accessRole !== "admin") return <TeachersOnly />;
   const reports = db.reports.filter(
     (r) => !["returned", "dismissed"].includes(r.status),
   );
@@ -1232,7 +1241,7 @@ function AdminPage() {
             <Logo />
             <span className="hidden h-5 w-px bg-[hsl(var(--border))] sm:block" />
             <span className="hidden text-xs font-bold text-[hsl(var(--muted-foreground))] sm:block">
-              Teacher console
+              {accessRole === "admin" ? "Admin console" : "Teacher console"}
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -1263,7 +1272,7 @@ function AdminPage() {
               Good morning, {profile.full_name.split(" ")[0] || "there"}.
             </h1>
             <p className="mt-2 text-sm text-[hsl(var(--muted-foreground))]">
-              A clear view of the belongings moving through campus.
+              {accessRole === "admin" ? "A trusted view of campus recovery and approvals." : "A clear view of the belongings moving through campus."}
             </p>
           </div>
           <div className="flex rounded-xl bg-[hsl(var(--muted)/.7)] p-1">
