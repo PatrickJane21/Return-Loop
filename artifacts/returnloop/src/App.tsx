@@ -13,6 +13,8 @@ import { Link, Route, Switch, useLocation, useParams, Router as WouterRouter } f
 import QRCode from 'qrcode';
 import { Html5Qrcode } from 'html5-qrcode';
 import { supabase, supabaseConfigured } from '@/lib/supabase';
+import { SearchableSelect } from '@/components/searchable-select';
+import { OTHER_PROGRAM, OTHER_SPECIALIZATION, PROGRAM_OPTIONS, SECTION_OPTIONS } from '@/lib/signup-options';
 
 type Role = 'student' | 'teacher';
 type Status = 'lost' | 'found' | 'returned';
@@ -35,6 +37,9 @@ type Store = {
   loading: boolean;
   signInWithEmail: (email: string, password: string) => Promise<AuthResult>;
   createAccount: (profile: { full_name: string; email: string; student_id: string; course_or_class: string; section: string }, password: string) => Promise<AuthResult>;
+  resendSignupConfirmation: (email: string) => Promise<string | null>;
+    requestPasswordReset: (email: string) => Promise<string | null>;
+    updatePassword: (password: string) => Promise<string | null>;
   signOut: () => Promise<void>;
   addItem: (input: { item_name: string; category: Category; description: string }) => Promise<{ item?: Item; error?: string }>;
   updateItemDetails: (itemId: string, input: { item_name: string; category: Category; description: string }) => Promise<string | null>;
@@ -110,18 +115,46 @@ function StoreProvider({ children }: { children: ReactNode }) {
     db, profile, loading,
     signInWithEmail: async (email, password) => {
       const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
-      if (error) return { ok: false, error: error.message === 'Invalid login credentials' ? 'That email and password do not match.' : error.message };
+      if (error) {
+        const message = error.message.toLowerCase();
+        if (message.includes('invalid login credentials')) return { ok: false, error: 'That email and password do not match.' };
+        if (message.includes('email not confirmed')) return { ok: false, error: 'If this account needs email confirmation, check your inbox or request a new confirmation email below.' };
+        return { ok: false, error: 'We could not sign you in. Check your details and try again.' };
+      }
       return { ok: true };
     },
     createAccount: async (newProfile, password) => {
       const { data, error } = await supabase.auth.signUp({
         email: newProfile.email.trim(),
         password,
-        options: { data: { full_name: newProfile.full_name, student_id: newProfile.student_id, course_or_class: newProfile.course_or_class, section: newProfile.section } },
+        options: { emailRedirectTo: `${window.location.origin}/auth/callback`, data: { full_name: newProfile.full_name, student_id: newProfile.student_id, course_or_class: newProfile.course_or_class, section: newProfile.section } },
       });
-      if (error) return { ok: false, error: error.message };
+      if (error) {
+        const message = error.message.toLowerCase();
+        if (message.includes('password')) return { ok: false, error: 'Password does not meet the account security requirements.' };
+        if (message.includes('email')) return { ok: false, error: 'Enter a valid email address and try again.' };
+        return { ok: false, error: 'We could not create the account. Check the details or sign in if you may already have an account.' };
+      }
       if (!data.session) return { ok: true, needsConfirm: true };
       return { ok: true };
+    },
+    resendSignupConfirmation: async (email) => {
+      const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email: email.trim(),
+        options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
+      });
+      return error?.message ?? null;
+    },
+    requestPasswordReset: async (email) => {
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: `${window.location.origin}/auth/callback`,
+      });
+      return error?.message ?? null;
+    },
+    updatePassword: async (password) => {
+      const { error } = await supabase.auth.updateUser({ password });
+      return error?.message ?? null;
     },
     signOut: async () => { await supabase.auth.signOut(); },
     addItem: async (input) => {
@@ -264,34 +297,595 @@ function Feature({ icon: Icon, title, text, tone }: { icon: typeof ShieldCheck; 
 
 function AuthPage() {
   const [, setLocation] = useLocation();
-  const { profile, signInWithEmail, createAccount } = useStore();
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
-  const [email, setEmail] = useState('');
-  const [name, setName] = useState('');
-  const [studentId, setStudentId] = useState('');
-  const [course, setCourse] = useState('');
-  const [section, setSection] = useState('');
+  const { profile, signInWithEmail, createAccount, resendSignupConfirmation, requestPasswordReset } = useStore();
+  const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
+  const [studentId, setStudentId] = useState("");
+  const [program, setProgram] = useState("");
+  const [customProgram, setCustomProgram] = useState("");
+  const [specialization, setSpecialization] = useState("");
+  const [customSpecialization, setCustomSpecialization] = useState("");
+  const [section, setSection] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [resendingConfirmation, setResendingConfirmation] = useState(false);
+  const selectedProgram = PROGRAM_OPTIONS.find((option) => option.name === program);
+  const passwordChecks = [
+    password.length >= 8,
+    /[a-z]/.test(password),
+    /[A-Z]/.test(password),
+    /\d/.test(password),
+  ];
+  const passwordScore = passwordChecks.filter(Boolean).length;
+  const courseOrClass = [
+    program === OTHER_PROGRAM ? customProgram.trim() : program,
+    specialization === OTHER_SPECIALIZATION ? customSpecialization.trim() : specialization,
+  ].filter(Boolean).join(" — ");
+  useEffect(() => {
+    if (profile) setLocation(profile.role === "teacher" ? "/admin" : "/app");
+  }, [profile, setLocation]);
+  const requestReset = async () => {
+    if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setError("Enter your email address first.");
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      const problem = await requestPasswordReset(email);
+      setNotice(problem ? "If an account uses that email, a reset message may arrive shortly." : "If an account uses that email, a reset message will arrive shortly.");
+    } catch {
+      setNotice("If an account uses that email, a reset message may arrive shortly.");
+    } finally {
+      setLoading(false);
+    }
+  };
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+    if (mode === "signup") {
+      if (!name.trim()) {
+        setError("Enter your full name.");
+        return;
+      }
+      if (name.trim().length > 100 || !studentId.trim() || studentId.trim().length > 50) {
+        setError("Enter a name of at most 100 characters and a student ID of at most 50 characters.");
+        return;
+      }
+      if (email.trim().length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+        setError("Enter a valid email address.");
+        return;
+      }
+      if (!program || (program === OTHER_PROGRAM && !customProgram.trim())) {
+        setError("Choose a program and enter its name if you selected Other.");
+        return;
+      }
+      if (selectedProgram && selectedProgram.specializations.length > 0 && !specialization) {
+        setError("Choose a specialization.");
+        return;
+      }
+      if (specialization === OTHER_SPECIALIZATION && !customSpecialization.trim()) {
+        setError("Enter your specialization.");
+        return;
+      }
+      if (!section) {
+        setError("Choose a section.");
+        return;
+      }
+      if (courseOrClass.length > 100) {
+        setError("Program and specialization must fit within 100 characters.");
+        return;
+      }
+      if (passwordScore < passwordChecks.length) {
+        setError("Use at least 8 characters, including uppercase, lowercase, and a number.");
+        return;
+      }
+      if (password !== confirmPassword) {
+        setError("Passwords do not match.");
+        return;
+      }
+    }
+    setLoading(true);
+    try {
+      const result =
+        mode === "signin"
+          ? await signInWithEmail(email.trim(), password)
+          : await createAccount(
+              {
+                full_name: name.trim(),
+                email: email.trim(),
+                student_id: studentId.trim(),
+                course_or_class: courseOrClass,
+                section,
+              },
+              password,
+            );
+      if (!result.ok) {
+        setError(result.error ?? "We could not complete that request.");
+        return;
+      }
+      if (result.needsConfirm) {
+        setNotice("Account created. Check your email and click the confirmation link to finish setting up your account.");
+        setMode("signin");
+      }
+    } catch {
+      setError("We couldn’t reach the account service. Check your connection and try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+  return (
+    <div className="rl-noise min-h-[100dvh] bg-[hsl(var(--background))]">
+      <TopBar
+        action={
+          <Link
+            href="/"
+            data-testid="link-auth-back"
+            className="text-sm font-semibold text-[hsl(var(--muted-foreground))]"
+          >
+            Back to home
+          </Link>
+        }
+      />
+      <main className="mx-auto grid max-w-[1050px] items-center gap-12 px-5 py-12 sm:px-8 lg:grid-cols-[.85fr_1fr] lg:py-20">
+        <div className="animate-in-up">
+          <Pill tone="green">
+            <LockKeyhole size={13} /> Made for your campus
+          </Pill>
+          <h1 className="mt-6 max-w-md font-display text-5xl font-extrabold leading-[.95] tracking-[-.06em] text-[hsl(var(--primary))]">
+            Keep the things that keep{" "}
+            <span className="text-[hsl(var(--secondary))]">you</span> going.
+          </h1>
+          <p className="mt-5 max-w-sm leading-7 text-[hsl(var(--muted-foreground))]">
+            Sign in to register a new item, see a finder’s note, or help
+            something else find its way home.
+          </p>
+          <div className="mt-8 flex items-center gap-3 text-xs text-[hsl(var(--muted-foreground))]">
+            <ShieldCheck size={16} className="text-[hsl(var(--secondary))]" />{" "}
+            Your identity stays private on every tag.
+          </div>
+        </div>
+        <div className="rounded-[1.75rem] border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-5 shadow-[0_24px_80px_hsl(var(--primary)/.08)] sm:p-8">
+          <div className="flex rounded-xl bg-[hsl(var(--muted)/.7)] p-1">
+            <button
+              type="button"
+              onClick={() => {
+                setMode("signin");
+                setError("");
+              }}
+              data-testid="button-auth-signin-tab"
+              className={`flex-1 rounded-lg py-2 text-sm font-bold ${mode === "signin" ? "bg-[hsl(var(--card))] text-[hsl(var(--foreground))] shadow-sm" : "text-[hsl(var(--muted-foreground))]"}`}
+            >
+              Sign in
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setMode("signup");
+                setError("");
+                setNotice("");
+              }}
+              data-testid="button-auth-signup-tab"
+              className={`flex-1 rounded-lg py-2 text-sm font-bold ${mode === "signup" ? "bg-[hsl(var(--card))] text-[hsl(var(--foreground))] shadow-sm" : "text-[hsl(var(--muted-foreground))]"}`}
+            >
+              Create account
+            </button>
+          </div>
+          <form onSubmit={submit} className="mt-7 space-y-4">
+            <div>
+              <label htmlFor="input-auth-email" className="mb-1.5 block text-xs font-bold text-[hsl(var(--foreground))]">
+                Email address
+              </label>
+              <input
+                id="input-auth-email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                type="email"
+                required
+                maxLength={254}
+                autoComplete="email"
+                placeholder="you@example.com"
+                data-testid="input-auth-email"
+                className="w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-4 py-3 text-sm outline-none transition focus:border-[hsl(var(--secondary))] focus:ring-4 focus:ring-[hsl(var(--secondary)/.12)]"
+              />
+            </div>
+            {mode === "signup" && (
+              <>
+                <div>
+                  <label htmlFor="input-auth-name" className="mb-1.5 block text-xs font-bold">
+                    Your full name
+                  </label>
+                  <input
+                    id="input-auth-name"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    required
+                    maxLength={100}
+                    autoComplete="name"
+                    placeholder="Enter your full name"
+                    data-testid="input-auth-name"
+                    className="w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-4 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]"
+                  />
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <label htmlFor="input-auth-student-id" className="mb-1.5 block text-xs font-bold">
+                      Student ID
+                    </label>
+                    <input
+                      id="input-auth-student-id"
+                      value={studentId}
+                      onChange={(e) => setStudentId(e.target.value)}
+                      required
+                      maxLength={50}
+                      placeholder="Enter your student ID"
+                      data-testid="input-auth-student-id"
+                      className="w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-4 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs font-bold">
+                      Program
+                    </label>
+                    <SearchableSelect
+                      label="Program"
+                      value={program}
+                      options={PROGRAM_OPTIONS.map((option) => option.name)}
+                      placeholder="Choose a program"
+                      searchPlaceholder="Search programs…"
+                      onChange={(value) => {
+                        setProgram(value);
+                        setCustomProgram("");
+                        setSpecialization("");
+                        setCustomSpecialization("");
+                        setSection("");
+                      }}
+                    />
+                  </div>
+                </div>
+                {program === OTHER_PROGRAM && (
+                  <div>
+                    <label htmlFor="input-auth-other-program" className="mb-1.5 block text-xs font-bold">Institution-specific program</label>
+                    <input id="input-auth-other-program" value={customProgram} onChange={(event) => setCustomProgram(event.target.value)} required maxLength={100} placeholder="Enter your program" data-testid="input-auth-other-program" className="w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-4 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]" />
+                  </div>
+                )}
+                {selectedProgram && selectedProgram.specializations.length > 0 && (
+                  <div>
+                    <label className="mb-1.5 block text-xs font-bold">Branch / specialization</label>
+                    <SearchableSelect
+                      label="Branch or specialization"
+                      value={specialization}
+                      options={selectedProgram.specializations}
+                      placeholder="Choose a specialization"
+                      searchPlaceholder="Search specializations…"
+                      onChange={(value) => {
+                        setSpecialization(value);
+                        setCustomSpecialization("");
+                        setSection("");
+                      }}
+                    />
+                    {specialization === OTHER_SPECIALIZATION && (
+                      <input value={customSpecialization} onChange={(event) => setCustomSpecialization(event.target.value)} required maxLength={100} placeholder="Enter your specialization" aria-label="Institution-specific specialization" className="mt-3 w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-4 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]" />
+                    )}
+                  </div>
+                )}
+                <div>
+                  <label className="mb-1.5 block text-xs font-bold">Section</label>
+                  <SearchableSelect
+                    label="Section"
+                    value={section}
+                    options={SECTION_OPTIONS}
+                    placeholder="Choose a section"
+                    searchPlaceholder="Search sections…"
+                    onChange={setSection}
+                  />
+                </div>
+                <p className="text-xs leading-5 text-[hsl(var(--muted-foreground))]">
+                  Program, branch, and section options are examples, not verified campus rules. Confirm your institution’s official list with an administrator.
+                </p>
+              </>
+            )}
+            <div>
+              <label htmlFor="input-auth-password" className="mb-1.5 block text-xs font-bold">
+                {mode === "signin" ? "Password" : "Create a password"}
+              </label>
+              <div className="relative">
+                <input
+                  id="input-auth-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  minLength={mode === "signup" ? 8 : 6}
+                  maxLength={72}
+                  autoComplete={mode === "signin" ? "current-password" : "new-password"}
+                  type={showPassword ? "text" : "password"}
+                  placeholder={mode === "signin" ? "Enter your password" : "At least 8 characters"}
+                  data-testid="input-auth-password"
+                  className="w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-4 py-3 pr-12 text-sm outline-none focus:border-[hsl(var(--secondary))]"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((visible) => !visible)}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[hsl(var(--muted-foreground))]"
+                >
+                  {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
+                </button>
+              </div>
+            </div>
+            {mode === "signin" && <button type="button" onClick={() => { void requestReset(); }} disabled={loading} className="text-left text-xs font-semibold text-[hsl(var(--primary))] underline underline-offset-4 disabled:opacity-50">Forgot password?</button>}
+            {mode === "signup" && (
+              <>
+                <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--muted)/.35)] p-3" aria-live="polite">
+                  <div className="flex items-center justify-between gap-3 text-xs">
+                    <span className="font-semibold">Password strength</span>
+                    <span className="text-[hsl(var(--muted-foreground))]">
+                      {password.length === 0 ? "Not entered" : passwordScore === 4 ? "Strong" : passwordScore >= 2 ? "Getting stronger" : "Needs work"}
+                    </span>
+                  </div>
+                  <div className="mt-2 grid grid-cols-4 gap-1" aria-hidden="true">
+                    {passwordChecks.map((passed, index) => <span key={index} className={`h-1.5 rounded-full ${passed ? "bg-[hsl(var(--secondary))]" : "bg-[hsl(var(--border))]"}`} />)}
+                  </div>
+                  <p className="mt-2 text-[10px] leading-4 text-[hsl(var(--muted-foreground))]">Use 8+ characters with uppercase, lowercase, and a number. Supabase may require additional rules.</p>
+                </div>
+                <div>
+                  <label htmlFor="input-auth-confirm-password" className="mb-1.5 block text-xs font-bold">Confirm password</label>
+                  <div className="relative">
+                    <input
+                      id="input-auth-confirm-password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      required
+                      minLength={8}
+                      maxLength={72}
+                      autoComplete="new-password"
+                      type={showConfirmPassword ? "text" : "password"}
+                      placeholder="Enter the same password again"
+                      data-testid="input-auth-confirm-password"
+                      className="w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-4 py-3 pr-12 text-sm outline-none focus:border-[hsl(var(--secondary))]"
+                    />
+                    <button type="button" onClick={() => setShowConfirmPassword((visible) => !visible)} aria-label={showConfirmPassword ? "Hide confirmation password" : "Show confirmation password"} className="absolute right-3 top-1/2 -translate-y-1/2 text-[hsl(var(--muted-foreground))]">
+                      {showConfirmPassword ? <EyeOff size={17} /> : <Eye size={17} />}
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+            {notice && (
+              <div
+                role="status"
+                className="flex items-start gap-2 rounded-xl bg-[hsl(var(--secondary)/.15)] p-3 text-xs leading-5 text-[hsl(161_38%_29%)]"
+              >
+                <Check size={16} className="mt-0.5 shrink-0" />
+                {notice}
+              </div>
+            )}
+            {mode === "signin" && email.trim() && (
+              <button
+                type="button"
+                disabled={resendingConfirmation}
+                onClick={async () => {
+                  setResendingConfirmation(true);
+                  setError("");
+                  try {
+                    const problem = await resendSignupConfirmation(email);
+                    setNotice(problem
+                      ? "We couldn’t resend the confirmation email. Check the address and try again later."
+                      : "If this account still needs confirmation, a new email will arrive shortly.");
+                  } catch {
+                    setNotice("We couldn’t resend the confirmation email. Check your connection and try again later.");
+                  } finally {
+                    setResendingConfirmation(false);
+                  }
+                }}
+                className="text-left text-xs font-semibold text-[hsl(var(--primary))] underline underline-offset-4 disabled:opacity-50"
+              >
+                {resendingConfirmation ? "Sending…" : "Resend confirmation email"}
+              </button>
+            )}
+            {error && (
+              <div
+                role="alert"
+                className="flex items-start gap-2 rounded-xl bg-[hsl(var(--destructive)/.1)] p-3 text-xs leading-5 text-[hsl(var(--destructive))]"
+              >
+                <CircleAlert size={16} className="mt-0.5 shrink-0" />
+                {error}
+              </div>
+            )}
+            <Button
+              type="submit"
+              disabled={loading}
+              className="mt-2 w-full"
+              data-testid="button-auth-submit"
+            >
+              {loading ? (
+                <>
+                  <RefreshCw size={16} className="animate-spin" /> Working…
+                </>
+              ) : (
+                <>
+                  {mode === "signin"
+                    ? "Sign in to ReturnLoop"
+                    : "Create my account"}{" "}
+                  <ArrowRight size={16} />
+                </>
+              )}
+            </Button>
+          </form>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+function AuthCallbackPage() {
+  const [, setLocation] = useLocation();
+  const [state, setState] = useState<'verifying' | 'success' | 'error'>('verifying');
+  const [message, setMessage] = useState('Verifying your email…');
+  const callbackMarkerKey = 'returnloop:confirmed-user';
+
+  useEffect(() => {
+    let active = true;
+    let redirectTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const finishConfirmation = async () => {
+      const callbackUrl = new URL(window.location.href);
+      const params = callbackUrl.searchParams;
+      const code = params.get('code');
+      const tokenHash = params.get('token_hash');
+      const tokenType = params.get('type');
+      const hashParams = new URLSearchParams(callbackUrl.hash.slice(1));
+      const accessToken = hashParams.get('access_token');
+      const refreshToken = hashParams.get('refresh_token');
+      const callbackError = params.get('error_code') ?? params.get('error') ?? hashParams.get('error');
+      const hasCallbackPayload = Boolean(code || tokenHash || accessToken || refreshToken || callbackError);
+
+      window.history.replaceState({}, document.title, callbackUrl.pathname);
+
+      try {
+        if (callbackError) {
+          throw new Error(callbackError === 'otp_expired' ? 'This confirmation link has expired. Return to sign in and request a new one.' : 'This confirmation link could not be verified. Please request a new link and try again.');
+        }
+
+        if (!hasCallbackPayload) {
+          const { data, error } = await supabase.auth.getSession();
+          const completedUserId = sessionStorage.getItem(callbackMarkerKey);
+          if (!error && data.session && completedUserId === data.session.user.id) {
+            sessionStorage.removeItem(callbackMarkerKey);
+            const { data: profile } = await supabase.from('profiles').select('role').eq('id', data.session.user.id).maybeSingle();
+            if (!active) return;
+            setState('success');
+            setMessage('Email confirmed. Taking you to ReturnLoop…');
+            redirectTimer = setTimeout(() => setLocation(profile?.role === 'teacher' ? '/admin' : '/app'), 500);
+            return;
+          }
+          throw new Error('This confirmation link is invalid or expired. Return to sign in and request a new one.');
+        }
+
+        if (code) {
+          const { error } = await supabase.auth.exchangeCodeForSession(code);
+          if (error) throw error;
+        } else if (tokenHash && (tokenType === 'signup' || tokenType === 'email')) {
+          const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type: tokenType });
+          if (error) throw error;
+        } else if (accessToken && refreshToken) {
+          const { error } = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
+          if (error) throw error;
+        } else {
+          throw new Error('This confirmation link is incomplete. Please request a new one.');
+        }
+
+        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+        if (sessionError) throw sessionError;
+        if (!sessionData.session) {
+          throw new Error('No verified session was created. Please return to sign in and request a new confirmation link.');
+        }
+
+        if (tokenType === 'recovery') {
+          if (!active) return;
+          setState('success');
+          setMessage('Link verified. Taking you to choose a new password…');
+          redirectTimer = setTimeout(() => setLocation('/auth/reset'), 500);
+          return;
+        }
+
+        const { data: userData, error: userError } = await supabase.auth.getUser();
+        if (userError) throw userError;
+        sessionStorage.setItem(callbackMarkerKey, userData.user.id);
+        const { data: profile } = await supabase.from('profiles').select('role').eq('id', userData.user.id).maybeSingle();
+        const destination = profile?.role === 'teacher' ? '/admin' : '/app';
+
+        if (!active) return;
+        setState('success');
+        setMessage('Email confirmed. Taking you to ReturnLoop…');
+        redirectTimer = setTimeout(() => setLocation(destination), 500);
+      } catch (error) {
+        if (!active) return;
+        const errorMessage = error instanceof Error ? error.message.toLowerCase() : '';
+        const expired = errorMessage.includes('expired') || errorMessage.includes('otp_expired');
+        setState('error');
+        setMessage(expired
+          ? 'This confirmation link has expired. Return to sign in and request a new one.'
+          : 'We could not verify this link. Return to sign in and request a new confirmation email.');
+      }
+    };
+
+    void finishConfirmation();
+    return () => {
+      active = false;
+      if (redirectTimer) clearTimeout(redirectTimer);
+    };
+  }, [setLocation]);
+
+  return <div className="grid min-h-[100dvh] place-items-center bg-[hsl(var(--background))] px-5 text-center">
+    <div className="max-w-md">
+      {state === 'verifying' ? <RefreshCw className="mx-auto animate-spin text-[hsl(var(--secondary))]" size={34} /> : state === 'success' ? <CheckCircle2 className="mx-auto text-[hsl(var(--secondary))]" size={36} /> : <CircleAlert className="mx-auto text-[hsl(var(--accent))]" size={36} />}
+      <h1 className="mt-5 font-display text-3xl font-bold">{state === 'error' ? 'Email verification didn’t finish' : 'ReturnLoop account'}</h1>
+      <p role={state === 'error' ? 'alert' : 'status'} className="mt-3 text-sm leading-6 text-[hsl(var(--muted-foreground))]">{message}</p>
+      {state === 'error' && <Link href="/auth" className="mt-6 inline-flex items-center gap-2 font-bold text-[hsl(var(--primary))]">Back to sign in <ArrowRight size={16} /></Link>}
+    </div>
+  </div>;
+}
+
+function ResetPasswordPage() {
+  const [, setLocation] = useLocation();
+  const { updatePassword } = useStore();
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
-  useEffect(() => { if (profile) setLocation(profile.role === 'teacher' ? '/admin' : '/app'); }, [profile, setLocation]);
+  const strength = [password.length >= 8, /[a-z]/.test(password), /[A-Z]/.test(password), /\d/.test(password)].filter(Boolean).length;
+  const resetFields: { label: string; value: string; setValue: (value: string) => void; visible: boolean; setVisible: (value: boolean) => void }[] = [
+    { label: 'New password', value: password, setValue: setPassword, visible: showPassword, setVisible: setShowPassword },
+    { label: 'Confirm password', value: confirmPassword, setValue: setConfirmPassword, visible: showConfirmPassword, setVisible: setShowConfirmPassword },
+  ];
+
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     setError('');
-    setNotice('');
-    if (mode === 'signup' && password !== confirmPassword) { setError('Passwords do not match.'); return; }
-    setLoading(true);
-    const result = mode === 'signin'
-      ? await signInWithEmail(email, password)
-      : await createAccount({ full_name: name.trim(), email: email.trim(), student_id: studentId.trim(), course_or_class: course.trim(), section: section.trim() }, password);
-    setLoading(false);
-    if (!result.ok) { setError(result.error ?? 'We could not complete that request.'); return; }
-    if (result.needsConfirm) { setNotice('Account created. Check your email, click the confirmation link, then sign in.'); setMode('signin'); }
+    setMessage('');
+    if (strength < 4) {
+      setError('Use at least 8 characters with uppercase, lowercase, and a number.');
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError('Passwords do not match.');
+      return;
+    }
+    setBusy(true);
+    const problem = await updatePassword(password);
+    setBusy(false);
+    if (problem) {
+      setError('We could not update your password. The reset link may have expired.');
+      return;
+    }
+    setMessage('Password updated. Redirecting you to sign in…');
+    setTimeout(() => setLocation('/auth'), 700);
   };
-  return <div className="rl-noise min-h-[100dvh] bg-[hsl(var(--background))]"><TopBar action={<Link href="/" data-testid="link-auth-back" className="text-sm font-semibold text-[hsl(var(--muted-foreground))]">Back to home</Link>} /><main className="mx-auto grid max-w-[1050px] items-center gap-12 px-5 py-12 sm:px-8 lg:grid-cols-[.85fr_1fr] lg:py-20"><div className="animate-in-up"><Pill tone="green"><LockKeyhole size={13} /> Made for your campus</Pill><h1 className="mt-6 max-w-md font-display text-5xl font-extrabold leading-[.95] tracking-[-.06em] text-[hsl(var(--primary))]">Keep the things that keep <span className="text-[hsl(var(--secondary))]">you</span> going.</h1><p className="mt-5 max-w-sm leading-7 text-[hsl(var(--muted-foreground))]">Sign in to register a new item, see a finder’s note, or help something else find its way home.</p><div className="mt-8 flex items-center gap-3 text-xs text-[hsl(var(--muted-foreground))]"><ShieldCheck size={16} className="text-[hsl(var(--secondary))]" /> Your identity stays private on every tag.</div></div><div className="rounded-[1.75rem] border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-5 shadow-[0_24px_80px_hsl(var(--primary)/.08)] sm:p-8"><div className="flex rounded-xl bg-[hsl(var(--muted)/.7)] p-1"><button type="button" onClick={() => { setMode('signin'); setError(''); }} data-testid="button-auth-signin-tab" className={`flex-1 rounded-lg py-2 text-sm font-bold ${mode === 'signin' ? 'bg-[hsl(var(--card))] text-[hsl(var(--foreground))] shadow-sm' : 'text-[hsl(var(--muted-foreground))]'}`}>Sign in</button><button type="button" onClick={() => { setMode('signup'); setError(''); }} data-testid="button-auth-signup-tab" className={`flex-1 rounded-lg py-2 text-sm font-bold ${mode === 'signup' ? 'bg-[hsl(var(--card))] text-[hsl(var(--foreground))] shadow-sm' : 'text-[hsl(var(--muted-foreground))]'}`}>Create account</button></div><form onSubmit={submit} className="mt-7 space-y-4"><div><label className="mb-1.5 block text-xs font-bold text-[hsl(var(--foreground))]">Campus email</label><input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required placeholder="you@northfield.edu" data-testid="input-auth-email" className="w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-4 py-3 text-sm outline-none transition focus:border-[hsl(var(--secondary))] focus:ring-4 focus:ring-[hsl(var(--secondary)/.12)]" /></div>{mode === 'signup' && <><div><label className="mb-1.5 block text-xs font-bold">Your full name</label><input value={name} onChange={(e) => setName(e.target.value)} required placeholder="Aryan Mishra" data-testid="input-auth-name" className="w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-4 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]" /></div><div className="grid gap-4 sm:grid-cols-2"><div><label className="mb-1.5 block text-xs font-bold">Student ID</label><input value={studentId} onChange={(e) => setStudentId(e.target.value)} required placeholder="NF-25-204" data-testid="input-auth-student-id" className="w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-4 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]" /></div><div><label className="mb-1.5 block text-xs font-bold">Section</label><input value={section} onChange={(e) => setSection(e.target.value)} required placeholder="A" data-testid="input-auth-section" className="w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-4 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]" /></div></div><div><label className="mb-1.5 block text-xs font-bold">Course / class</label><input value={course} onChange={(e) => setCourse(e.target.value)} required placeholder="Computer Science" data-testid="input-auth-course" className="w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-4 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]" /></div></>}<div><label className="mb-1.5 block text-xs font-bold">{mode === 'signin' ? 'Password' : 'Create a password'}</label><div className="relative"><input value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6} type={showPassword ? 'text' : 'password'} placeholder="At least 6 characters" data-testid="input-auth-password" className="w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-4 py-3 pr-12 text-sm outline-none focus:border-[hsl(var(--secondary))]" /><button type="button" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? 'Hide password' : 'Show password'} className="absolute right-3 top-1/2 -translate-y-1/2 text-[hsl(var(--muted-foreground))]">{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div></div>{mode === 'signup' && <div><label className="mb-1.5 block text-xs font-bold">Confirm password</label><input value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} required minLength={6} type={showPassword ? 'text' : 'password'} placeholder="Repeat your password" data-testid="input-auth-confirm-password" className="w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-4 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]" /></div>}{notice && <div role="status" className="flex items-start gap-2 rounded-xl bg-[hsl(var(--secondary)/.15)] p-3 text-xs leading-5 text-[hsl(161_38%_29%)]"><Check size={16} className="mt-0.5 shrink-0" />{notice}</div>}{error && <div role="alert" className="flex items-start gap-2 rounded-xl bg-[hsl(var(--destructive)/.1)] p-3 text-xs leading-5 text-[hsl(var(--destructive))]"><CircleAlert size={16} className="mt-0.5 shrink-0" />{error}</div>}<Button type="submit" disabled={loading} className="mt-2 w-full" data-testid="button-auth-submit">{loading ? <><RefreshCw size={16} className="animate-spin" /> Working…</> : <>{mode === 'signin' ? 'Sign in to ReturnLoop' : 'Create my account'} <ArrowRight size={16} /></>}</Button></form></div></main></div>;
+
+  return <div className="grid min-h-[100dvh] place-items-center bg-[hsl(var(--background))] px-5">
+    <div className="w-full max-w-md rounded-[1.75rem] border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-6 shadow-xl sm:p-8">
+      <Pill tone="green"><LockKeyhole size={13} /> Account recovery</Pill>
+      <h1 className="mt-5 font-display text-3xl font-bold">Choose a new password</h1>
+      <p className="mt-2 text-sm leading-6 text-[hsl(var(--muted-foreground))]">Use a strong password you have not used elsewhere.</p>
+      <form onSubmit={submit} className="mt-7 space-y-4">
+        {resetFields.map((field, index) => <div key={field.label}><label className="mb-1.5 block text-xs font-bold">{field.label}</label><div className="relative"><input value={field.value} onChange={(event) => field.setValue(event.target.value)} type={field.visible ? 'text' : 'password'} autoComplete="new-password" required minLength={8} maxLength={72} className="w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 py-3 pr-12 text-sm outline-none focus:border-[hsl(var(--secondary))]" /><button type="button" onClick={() => field.setVisible(!field.visible)} aria-label={field.visible ? `Hide ${field.label}` : `Show ${field.label}`} className="absolute right-3 top-1/2 -translate-y-1/2 text-[hsl(var(--muted-foreground))]">{field.visible ? <EyeOff size={17} /> : <Eye size={17} />}</button></div>{index === 0 && <p className="mt-2 text-[10px] text-[hsl(var(--muted-foreground))]">{strength === 4 ? 'Strong password' : 'Use 8+ characters with uppercase, lowercase, and a number.'}</p>}</div>)}
+        {message && <p role="status" className="rounded-xl bg-[hsl(var(--secondary)/.15)] p-3 text-sm text-[hsl(161_38%_29%)]">{message}</p>}
+        {error && <p role="alert" className="rounded-xl bg-[hsl(var(--destructive)/.1)] p-3 text-sm text-[hsl(var(--destructive))]">{error}</p>}
+        <Button type="submit" disabled={busy} className="w-full">{busy ? 'Updating…' : 'Update password'} <ArrowRight size={16} /></Button>
+      </form>
+    </div>
+  </div>;
 }
 
 function AccessGate() {
@@ -605,12 +1199,200 @@ function Field({ label, value, setValue, placeholder, test, required }: { label:
 
 function AdminPage() {
   const { db, profile, markReturned, dismissReport } = useStore();
-  const [tab, setTab] = useState<'overview' | 'items' | 'students'>('overview');
+  const [tab, setTab] = useState<"overview" | "items" | "students">("overview");
+  const [reportSearch, setReportSearch] = useState("");
+  const [reportStatus, setReportStatus] = useState<"all" | ReportStatus>("all");
   if (!profile) return <AccessGate />;
-  if (profile.role !== 'teacher') return <TeachersOnly />;
-  const reports = db.reports.filter((r) => !['returned', 'dismissed'].includes(r.status));
-  const returned = db.items.filter((i) => i.status === 'returned').length;
-  return <div className="min-h-[100dvh] bg-[hsl(var(--background))]"><header className="border-b border-[hsl(var(--border))] bg-[hsl(var(--card)/.82)] px-5 py-4 backdrop-blur sm:px-8 lg:px-12"><div className="mx-auto flex max-w-[1280px] items-center justify-between"><div className="flex items-center gap-5"><Logo /><span className="hidden h-5 w-px bg-[hsl(var(--border))] sm:block" /><span className="hidden text-xs font-bold text-[hsl(var(--muted-foreground))] sm:block">Teacher console</span></div><div className="flex items-center gap-2"><Link href="/app" data-testid="link-admin-student-view" className="hidden rounded-lg px-3 py-2 text-xs font-bold text-[hsl(var(--muted-foreground))] hover:bg-[hsl(var(--muted))] sm:block">Student view</Link><span className="grid h-9 w-9 place-items-center rounded-full bg-[hsl(var(--primary))] text-xs font-bold text-[hsl(var(--secondary))]">{profile.full_name.split(' ').map((n) => n[0]).join('').slice(0, 2)}</span></div></div></header><main className="mx-auto max-w-[1280px] px-5 py-7 sm:px-8 md:py-10 lg:px-12"><div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end"><div><Pill tone="blue"><BookOpen size={13} /> Staff space</Pill><h1 className="mt-4 font-display text-4xl font-bold tracking-[-.05em]">Good morning, {profile.full_name.split(' ')[0] || 'there'}.</h1><p className="mt-2 text-sm text-[hsl(var(--muted-foreground))]">A clear view of the belongings moving through campus.</p></div><div className="flex rounded-xl bg-[hsl(var(--muted)/.7)] p-1">{(['overview', 'items', 'students'] as const).map((entry) => <button key={entry} onClick={() => setTab(entry)} data-testid={`button-admin-tab-${entry}`} className={`rounded-lg px-3 py-2 text-xs font-bold capitalize transition ${tab === entry ? 'bg-[hsl(var(--card))] shadow-sm' : 'text-[hsl(var(--muted-foreground))]'}`}>{entry}</button>)}</div></div><div className="mt-8 grid grid-cols-2 gap-3 md:grid-cols-4"><AdminStat label="Registered items" value={db.items.length.toString()} icon={Package} /><AdminStat label="Open found notes" value={reports.length.toString()} icon={Inbox} accent={reports.length > 0} /><AdminStat label="Returned this term" value={returned.toString()} icon={CheckCircle2} /><AdminStat label="Students protected" value={new Set(db.items.map((i) => i.owner_id)).size.toString()} icon={Users} /></div>{tab === 'overview' && <div className="mt-8 grid gap-7 lg:grid-cols-[1.35fr_.8fr]"><section className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card)/.6)] p-5 sm:p-7"><div className="flex items-center justify-between"><div><p className="font-mono-app text-[10px] uppercase tracking-[.17em] text-[hsl(var(--muted-foreground))]">Needs a handoff</p><h2 className="mt-2 font-display text-2xl font-bold">Open finder notes</h2></div><Pill tone="amber">{reports.length} open</Pill></div><div className="mt-5 space-y-3">{reports.length ? reports.map((report) => <ReportRow key={report.id} report={report} item={db.items.find((i) => i.id === report.item_id)} onReturn={() => { void markReturned(report.item_id); }} onDismiss={() => { void dismissReport(report.id); }} />) : <EmptyState text="Every found item is back where it belongs." />}</div></section><section className="rounded-2xl bg-[hsl(var(--primary))] p-6 text-[hsl(var(--primary-foreground))]"><div className="flex items-center justify-between"><span className="grid h-10 w-10 place-items-center rounded-xl bg-[hsl(var(--secondary)/.18)] text-[hsl(var(--secondary))]"><HeartHandshake size={19} /></span><MoreHorizontal size={18} className="text-[hsl(var(--primary-foreground)/.45)]" /></div><h2 className="mt-10 font-display text-2xl font-bold">The return rate is a community metric.</h2><p className="mt-3 text-sm leading-6 text-[hsl(var(--primary-foreground)/.58)]">Each clear handoff makes the next one feel more natural.</p><div className="mt-8 flex items-end gap-3"><span className="font-display text-5xl font-bold text-[hsl(var(--secondary))]">{returned}</span><span className="mb-2 text-xs text-[hsl(var(--primary-foreground)/.55)]">items returned<br />so far</span></div><div className="mt-4 h-2 overflow-hidden rounded-full bg-[hsl(var(--primary-foreground)/.12)]"><div className="h-full rounded-full bg-[hsl(var(--secondary))]" style={{ width: `${db.items.length ? Math.round((returned / db.items.length) * 100) : 0}%` }} /></div></section></div>}{tab === 'items' && <AdminItems items={db.items} profiles={db.profiles} onReturn={markReturned} />}{tab === 'students' && <AdminStudents profiles={db.profiles} items={db.items} />}</main></div>;
+  if (profile.role !== "teacher") return <TeachersOnly />;
+  const reports = db.reports.filter(
+    (r) => !["returned", "dismissed"].includes(r.status),
+  );
+  const visibleReports = reports
+    .filter((report) => {
+      const item = db.items.find((entry) => entry.id === report.item_id);
+      const query = reportSearch.trim().toLowerCase();
+      const searchable = [item?.item_name, report.finder_name, report.found_location, report.message]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return searchable.includes(query) && (reportStatus === "all" || report.status === reportStatus);
+    })
+    .sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime());
+  const returned = db.items.filter((i) => i.status === "returned").length;
+  return (
+    <div className="min-h-[100dvh] bg-[hsl(var(--background))]">
+      <header className="border-b border-[hsl(var(--border))] bg-[hsl(var(--card)/.82)] px-5 py-4 backdrop-blur sm:px-8 lg:px-12">
+        <div className="mx-auto flex max-w-[1280px] items-center justify-between">
+          <div className="flex items-center gap-5">
+            <Logo />
+            <span className="hidden h-5 w-px bg-[hsl(var(--border))] sm:block" />
+            <span className="hidden text-xs font-bold text-[hsl(var(--muted-foreground))] sm:block">
+              Teacher console
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Link
+              href="/app"
+              data-testid="link-admin-student-view"
+              className="hidden rounded-lg px-3 py-2 text-xs font-bold text-[hsl(var(--muted-foreground))] hover:bg-[hsl(var(--muted))] sm:block"
+            >
+              Student view
+            </Link>
+            <span className="grid h-9 w-9 place-items-center rounded-full bg-[hsl(var(--primary))] text-xs font-bold text-[hsl(var(--secondary))]">
+              {profile.full_name
+                .split(" ")
+                .map((n) => n[0])
+                .join("")
+                .slice(0, 2)}
+            </span>
+          </div>
+        </div>
+      </header>
+      <main className="mx-auto max-w-[1280px] px-5 py-7 sm:px-8 md:py-10 lg:px-12">
+        <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
+          <div>
+            <Pill tone="blue">
+              <BookOpen size={13} /> Staff space
+            </Pill>
+            <h1 className="mt-4 font-display text-4xl font-bold tracking-[-.05em]">
+              Good morning, {profile.full_name.split(" ")[0] || "there"}.
+            </h1>
+            <p className="mt-2 text-sm text-[hsl(var(--muted-foreground))]">
+              A clear view of the belongings moving through campus.
+            </p>
+          </div>
+          <div className="flex rounded-xl bg-[hsl(var(--muted)/.7)] p-1">
+            {(["overview", "items", "students"] as const).map((entry) => (
+              <button
+                key={entry}
+                onClick={() => setTab(entry)}
+                data-testid={`button-admin-tab-${entry}`}
+                className={`rounded-lg px-3 py-2 text-xs font-bold capitalize transition ${tab === entry ? "bg-[hsl(var(--card))] shadow-sm" : "text-[hsl(var(--muted-foreground))]"}`}
+              >
+                {entry}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="mt-8 grid grid-cols-2 gap-3 md:grid-cols-4">
+          <AdminStat
+            label="Registered items"
+            value={db.items.length.toString()}
+            icon={Package}
+          />
+          <AdminStat
+            label="Open found notes"
+            value={reports.length.toString()}
+            icon={Inbox}
+            accent={reports.length > 0}
+          />
+          <AdminStat
+            label="Returned this term"
+            value={returned.toString()}
+            icon={CheckCircle2}
+          />
+          <AdminStat
+            label="Students protected"
+            value={new Set(db.items.map((i) => i.owner_id)).size.toString()}
+            icon={Users}
+          />
+        </div>
+        {tab === "overview" && (
+          <div className="mt-8 grid gap-7 lg:grid-cols-[1.35fr_.8fr]">
+            <section className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card)/.6)] p-5 sm:p-7">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="font-mono-app text-[10px] uppercase tracking-[.17em] text-[hsl(var(--muted-foreground))]">
+                    Needs a handoff
+                  </p>
+                  <h2 className="mt-2 font-display text-2xl font-bold">
+                    Open finder notes
+                  </h2>
+                </div>
+                <Pill tone="amber">{visibleReports.length} of {reports.length} open</Pill>
+              </div>
+              <div className="mt-5 grid gap-3 sm:grid-cols-[minmax(0,1fr)_170px_auto]">
+                <label className="flex min-w-0 items-center gap-2 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 focus-within:border-[hsl(var(--secondary))]">
+                  <Search size={15} className="shrink-0 text-[hsl(var(--muted-foreground))]" />
+                  <input value={reportSearch} onChange={(event) => setReportSearch(event.target.value)} type="search" aria-label="Search finder reports" placeholder="Search item, finder, location" className="min-w-0 flex-1 bg-transparent py-3 text-sm outline-none placeholder:text-[hsl(var(--muted-foreground))]" />
+                </label>
+                <select value={reportStatus} onChange={(event) => setReportStatus(event.target.value as "all" | ReportStatus)} aria-label="Filter finder reports by status" className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]">
+                  <option value="all">All open statuses</option>
+                  <option value="new">New</option>
+                  <option value="reviewed">Reviewed</option>
+                </select>
+                <Button type="button" variant="outline" onClick={() => { setReportSearch(""); setReportStatus("all"); }} disabled={!reportSearch && reportStatus === "all"} className="px-3 text-xs">Clear</Button>
+              </div>
+              <div className="mt-5 space-y-3">
+                {visibleReports.length ? (
+                  visibleReports.map((report) => (
+                    <ReportRow
+                      key={report.id}
+                      report={report}
+                      item={db.items.find((i) => i.id === report.item_id)}
+                      onReturn={() => {
+                        void markReturned(report.item_id);
+                      }}
+                      onDismiss={() => {
+                        void dismissReport(report.id);
+                      }}
+                    />
+                  ))
+                ) : (
+                  <EmptyState text={reports.length ? "No reports match these filters." : "Every found item is back where it belongs."} />
+                )}
+              </div>
+            </section>
+            <section className="rounded-2xl bg-[hsl(var(--primary))] p-6 text-[hsl(var(--primary-foreground))]">
+              <div className="flex items-center justify-between">
+                <span className="grid h-10 w-10 place-items-center rounded-xl bg-[hsl(var(--secondary)/.18)] text-[hsl(var(--secondary))]">
+                  <HeartHandshake size={19} />
+                </span>
+                <MoreHorizontal
+                  size={18}
+                  className="text-[hsl(var(--primary-foreground)/.45)]"
+                />
+              </div>
+              <h2 className="mt-10 font-display text-2xl font-bold">
+                The return rate is a community metric.
+              </h2>
+              <p className="mt-3 text-sm leading-6 text-[hsl(var(--primary-foreground)/.58)]">
+                Each clear handoff makes the next one feel more natural.
+              </p>
+              <div className="mt-8 flex items-end gap-3">
+                <span className="font-display text-5xl font-bold text-[hsl(var(--secondary))]">
+                  {returned}
+                </span>
+                <span className="mb-2 text-xs text-[hsl(var(--primary-foreground)/.55)]">
+                  items returned
+                  <br />
+                  so far
+                </span>
+              </div>
+              <div className="mt-4 h-2 overflow-hidden rounded-full bg-[hsl(var(--primary-foreground)/.12)]">
+                <div
+                  className="h-full rounded-full bg-[hsl(var(--secondary))]"
+                  style={{
+                    width: `${db.items.length ? Math.round((returned / db.items.length) * 100) : 0}%`,
+                  }}
+                />
+              </div>
+            </section>
+          </div>
+        )}
+        {tab === "items" && (
+          <AdminItems
+            items={db.items}
+            profiles={db.profiles}
+            onReturn={markReturned}
+          />
+        )}
+        {tab === "students" && (
+          <AdminStudents profiles={db.profiles} items={db.items} />
+        )}
+      </main>
+    </div>
+  );
 }
 function TeachersOnly() {
   const [, setLocation] = useLocation();
@@ -650,7 +1432,7 @@ function NotFound() { return <div className="grid min-h-[100dvh] place-items-cen
 function Router() {
   const { loading } = useStore();
   if (loading) return <Splash />;
-  return <ErrorBoundary><Switch><Route path="/" component={HomePage} /><Route path="/auth" component={AuthPage} /><Route path="/app/new" component={NewItemPage} /><Route path="/app" component={StudentDashboard} /><Route path="/scan" component={ScanPage} /><Route path="/found/:token" component={FoundPage} /><Route path="/admin" component={AdminPage} /><Route path="/profile" component={ProfilePage} /><Route path="/notifications" component={NotificationsPage} /><Route component={NotFound} /></Switch></ErrorBoundary>;
+  return <ErrorBoundary><Switch><Route path="/" component={HomePage} /><Route path="/auth/callback" component={AuthCallbackPage} /><Route path="/auth/reset" component={ResetPasswordPage} /><Route path="/auth" component={AuthPage} /><Route path="/app/new" component={NewItemPage} /><Route path="/app" component={StudentDashboard} /><Route path="/scan" component={ScanPage} /><Route path="/found/:token" component={FoundPage} /><Route path="/admin" component={AdminPage} /><Route path="/profile" component={ProfilePage} /><Route path="/notifications" component={NotificationsPage} /><Route component={NotFound} /></Switch></ErrorBoundary>;
 }
 function App() {
   if (!supabaseConfigured) return <ConfigMissing />;

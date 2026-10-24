@@ -12,7 +12,7 @@ Before applying the follow-up SQL, make a database backup and confirm the existi
 
 ## Vercel configuration
 
-Set the Vercel **Root Directory** to `artifacts/returnloop`, and keep files outside the root included. Vercel deploys Git commits, not uncommitted workspace edits: merge the `supabase-integration` branch to `main` after preview testing, or configure the Production branch to that branch.
+Set the Vercel **Root Directory** to `artifacts/returnloop`, and keep files outside the root included. Vercel deploys Git commits, not uncommitted workspace edits: merge the reviewed feature pull request into `main` after Preview testing.
 
 Add these environment variables for both Preview and Production, with values from the existing Supabase project's API settings:
 
@@ -23,7 +23,25 @@ Save and redeploy after changing variables. Vite embeds these public values in t
 
 In Supabase Auth settings, set the site URL to the production Vercel URL and add it to the allowed redirect URLs. Keep email confirmation settings consistent with the desired signup behavior.
 
+Signup and password-reset requests use the same-origin `/auth/callback` route. Add the exact production and Preview origins plus `/auth/callback` to Supabase **Authentication → URL Configuration → Redirect URLs**. Keep Supabase's confirmation template using its supported confirmation URL placeholder (normally `{{ .ConfirmationURL }}`). The app exchanges PKCE codes, supports token-hash and implicit-token callbacks, establishes the session, routes confirmed students/teachers to their existing pages, and routes recovery links to `/auth/reset`. Dashboard Site URL, allowed URLs, and email template are private project settings and must be verified in the Supabase dashboard.
+
 New accounts are students. To make a teacher, let them register and then, as a trusted database administrator, promote only that profile after verifying the account UUID. Never expose role editing to public signup.
+
+Signup program, specialization, and section examples are in `artifacts/returnloop/src/lib/signup-options.ts`. They are illustrative, not verified campus data. The current schema stores program and specialization together in the existing `course_or_class` field (maximum 100 characters); the UI checks that limit. It does not invent an official student-ID format. The existing schema has no unique student-ID constraint, and the current production data cannot be inspected from this repository. Run this read-only duplicate check before applying `migrations/20261020000001_unique_student_ids.sql`:
+
+```sql
+select lower(btrim(student_id)) as normalized_id, count(*)
+from public.profiles
+where student_id is not null and btrim(student_id) <> ''
+group by lower(btrim(student_id))
+having count(*) > 1;
+```
+
+Only apply the unique-index migration if the query returns no rows. If it returns duplicates, have an authorized administrator resolve them using institutional records before applying the migration. Do not delete or merge profiles automatically.
+
+## Email notifications
+
+Found reports currently create in-app notifications through the existing database function/trigger. No transactional email provider or delivery function is configured in this repository. Actual email delivery is therefore not implemented or verified. To add it, choose a provider (for example Resend), configure its API key as a server-side Supabase Edge Function secret, and send to the owner email resolved from the trusted item/profile relationship. Do not put provider keys in Vercel `VITE_` variables or accept the recipient address from the finder. Keep the in-app notification independent so it still works if email delivery fails.
 
 ## Verify
 
