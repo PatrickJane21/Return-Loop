@@ -52,3 +52,33 @@ Found reports currently create in-app notifications through the existing databas
 5. Test with a teacher account that returning an item closes open reports and sends the configured notification.
 
 The follow-up migration enables Realtime for profiles, items, found reports, and notifications. RLS still controls what each user can receive.
+
+## Optional classroom and admin tables
+
+The migration `migrations/20261024000001_roles_complaints_and_email_logs.sql` adds these new tables without recreating the existing ones:
+
+- `user_roles`: approved `teacher` and `admin` roles.
+- `departments`: administrator-managed department names.
+- `locations`: classroom/lab QR locations.
+- `complaints`: classroom/lab issues and assignments.
+- `complaint_status_history`: immutable status-change records.
+- `email_delivery_logs`: server-side email attempt records.
+
+The complaint status flow is `submitted`, `under_review`, `assigned`, `in_progress`, and `resolved`. A location QR code identifies a room; it does not grant teacher or admin access.
+
+To apply it, first open Supabase **SQL Editor**, review the migration, and run it once. It is additive, but it is not used by the current UI until complaint/admin screens are implemented. Do not run it repeatedly.
+
+To provision the first administrator after a user has registered and confirmed their email, use a trusted Supabase SQL Editor session. Replace the email with the approved administrator's email:
+
+```sql
+insert into public.user_roles (user_id, role, approved_by)
+select id, 'admin', id
+from auth.users
+where lower(email) = lower('admin@example.com')
+on conflict (user_id) do update
+set role = 'admin', approved_at = now(), approved_by = excluded.approved_by;
+```
+
+This does not create a password or bypass Supabase Auth. The person must still sign in using their normal Supabase account. Never put a service-role key in the browser or signup form.
+
+Outbound email is still not active. `email_delivery_logs` only records attempts; a Supabase Edge Function and a provider such as Resend must be configured separately with server-side secrets before any email is sent.
