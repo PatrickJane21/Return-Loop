@@ -52,6 +52,8 @@ type Store = {
   updateItemDetails: (itemId: string, input: { item_name: string; category: Category; description: string }) => Promise<string | null>;
   createComplaint: (input: { location_id: string; title: string; description: string }) => Promise<string | null>;
   updateComplaint: (complaintId: string, input: { status?: ComplaintStatus; assigned_department_id?: string | null; assigned_to?: string | null; resolution_notes?: string | null }) => Promise<string | null>;
+  createDepartment: (name: string) => Promise<string | null>;
+  createLocation: (input: { room_code: string; building: string; name: string; department_id?: string | null }) => Promise<string | null>;
   updateItemStatus: (itemId: string, status: Status) => Promise<string | null>;
   markReturned: (itemId: string) => Promise<string | null>;
   dismissReport: (reportId: string) => Promise<string | null>;
@@ -214,6 +216,23 @@ function StoreProvider({ children }: { children: ReactNode }) {
     },
     updateComplaint: async (complaintId, input) => {
       const { error } = await supabase.from('complaints').update(input).eq('id', complaintId);
+      if (error) return error.message;
+      await load(userId);
+      return null;
+    },
+    createDepartment: async (name) => {
+      const { error } = await supabase.from('departments').insert({ name: name.trim() });
+      if (error) return error.message;
+      await load(userId);
+      return null;
+    },
+    createLocation: async (input) => {
+      const { error } = await supabase.from('locations').insert({
+        room_code: input.room_code.trim(),
+        building: input.building.trim(),
+        name: input.name.trim(),
+        department_id: input.department_id || null,
+      });
       if (error) return error.message;
       await load(userId);
       return null;
@@ -1246,8 +1265,8 @@ function FoundPage() {
 function Field({ label, value, setValue, placeholder, test, required }: { label: string; value: string; setValue: (value: string) => void; placeholder: string; test: string; required?: boolean }) { return <div><label className="mb-1.5 block text-xs font-bold">{label}</label><input value={value} onChange={(e) => setValue(e.target.value)} required={required} placeholder={placeholder} data-testid={test} className="w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]" /></div>; }
 
 function AdminPage() {
-  const { db, profile, accessRole, markReturned, dismissReport, updateComplaint } = useStore();
-  const [tab, setTab] = useState<"overview" | "items" | "students" | "complaints">("overview");
+  const { db, profile, accessRole, markReturned, dismissReport, updateComplaint, createDepartment, createLocation } = useStore();
+  const [tab, setTab] = useState<"overview" | "items" | "students" | "complaints" | "setup">("overview");
   const [reportSearch, setReportSearch] = useState("");
   const [reportStatus, setReportStatus] = useState<"all" | ReportStatus>("all");
   if (!profile) return <AccessGate />;
@@ -1310,7 +1329,7 @@ function AdminPage() {
             </p>
           </div>
           <div className="flex rounded-xl bg-[hsl(var(--muted)/.7)] p-1">
-            {(["overview", "items", "students", "complaints"] as const).map((entry) => (
+            {(["overview", "items", "students", "complaints", ...(accessRole === "admin" ? ["setup" as const] : [])] as const).map((entry) => (
               <button
                 key={entry}
                 onClick={() => setTab(entry)}
@@ -1441,6 +1460,9 @@ function AdminPage() {
         {tab === "complaints" && (
           <AdminComplaintQueue complaints={db.complaints} locations={db.locations} departments={db.departments} onUpdate={(id, input) => { void updateComplaint(id, input); }} />
         )}
+        {tab === "setup" && accessRole === "admin" && (
+          <AdminSetup departments={db.departments} locations={db.locations} createDepartment={createDepartment} createLocation={createLocation} />
+        )}
       </main>
     </div>
   );
@@ -1532,6 +1554,27 @@ function ComplaintsPage() {
 
 function AdminComplaintQueue({ complaints, locations, departments, onUpdate }: { complaints: Complaint[]; locations: Location[]; departments: Department[]; onUpdate: (id: string, input: { status?: ComplaintStatus; assigned_department_id?: string | null; resolution_notes?: string | null }) => void }) {
   return <section className="mt-8 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card)/.6)] p-5 sm:p-7"><div className="flex items-end justify-between"><div><p className="font-mono-app text-[10px] uppercase tracking-[.17em] text-[hsl(var(--muted-foreground))]">Operations</p><h2 className="mt-2 font-display text-2xl font-bold">Classroom care queue</h2></div><Pill tone="amber">{complaints.filter((complaint) => complaint.status !== 'resolved').length} open</Pill></div><div className="mt-5 space-y-3">{complaints.length ? complaints.map((complaint) => { const location = locations.find((entry) => entry.id === complaint.location_id); return <article key={complaint.id} className="rounded-xl border border-[hsl(var(--border))] p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-sm font-bold">{complaint.title}</p><p className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">{location?.room_code ?? 'Location'} · {location?.building ?? ''}</p></div><select value={complaint.status} onChange={(event) => onUpdate(complaint.id, { status: event.target.value as ComplaintStatus })} aria-label={`Update status for ${complaint.title}`} className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-2 py-2 text-xs"><option value="submitted">Submitted</option><option value="under_review">Under review</option><option value="assigned">Assigned</option><option value="in_progress">In progress</option><option value="resolved">Resolved</option></select></div><p className="mt-3 text-sm leading-6 text-[hsl(var(--muted-foreground))]">{complaint.description}</p><div className="mt-3 flex flex-wrap gap-2"><select value={complaint.assigned_department_id ?? ''} onChange={(event) => onUpdate(complaint.id, { assigned_department_id: event.target.value || null })} aria-label={`Assign department for ${complaint.title}`} className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-2 py-2 text-xs"><option value="">Assign department</option>{departments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}</select>{complaint.status === 'resolved' && <Button type="button" variant="soft" className="px-3 py-2 text-xs" onClick={() => onUpdate(complaint.id, { resolution_notes: window.prompt('Resolution notes', complaint.resolution_notes ?? '') ?? complaint.resolution_notes })}>Add resolution note</Button>}</div></article>; }) : <EmptyState text="No classroom complaints yet." />}</div></section>;
+}
+
+function AdminSetup({ departments, locations, createDepartment, createLocation }: { departments: Department[]; locations: Location[]; createDepartment: (name: string) => Promise<string | null>; createLocation: (input: { room_code: string; building: string; name: string; department_id?: string | null }) => Promise<string | null> }) {
+  const [departmentName, setDepartmentName] = useState('');
+  const [roomCode, setRoomCode] = useState('');
+  const [building, setBuilding] = useState('');
+  const [locationName, setLocationName] = useState('');
+  const [departmentId, setDepartmentId] = useState('');
+  const [message, setMessage] = useState('');
+  const [busy, setBusy] = useState(false);
+  const addDepartment = async (event: React.FormEvent) => {
+    event.preventDefault(); setBusy(true); setMessage('');
+    const problem = await createDepartment(departmentName);
+    setBusy(false); setMessage(problem ?? 'Department added.'); if (!problem) setDepartmentName('');
+  };
+  const addLocation = async (event: React.FormEvent) => {
+    event.preventDefault(); setBusy(true); setMessage('');
+    const problem = await createLocation({ room_code: roomCode, building, name: locationName, department_id: departmentId || null });
+    setBusy(false); setMessage(problem ?? 'Location added.'); if (!problem) { setRoomCode(''); setBuilding(''); setLocationName(''); setDepartmentId(''); }
+  };
+  return <section className="mt-8 grid gap-6 lg:grid-cols-2"><form onSubmit={addDepartment} className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card)/.6)] p-5 sm:p-7"><Pill tone="blue">Admin setup</Pill><h2 className="mt-3 font-display text-2xl font-bold">Departments</h2><p className="mt-2 text-sm text-[hsl(var(--muted-foreground))]">These names power complaint assignment. Only approved admins can create them.</p><input required maxLength={100} value={departmentName} onChange={(event) => setDepartmentName(event.target.value)} placeholder="e.g. Computer Lab Support" className="mt-5 w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]" /><Button type="submit" disabled={busy} className="mt-3 w-full">Add department</Button><div className="mt-5 space-y-2">{departments.map((department) => <p key={department.id} className="rounded-lg border border-[hsl(var(--border))] px-3 py-2 text-sm">{department.name}</p>)}</div></form><form onSubmit={addLocation} className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card)/.6)] p-5 sm:p-7"><Pill tone="green">Room registry</Pill><h2 className="mt-3 font-display text-2xl font-bold">Classrooms & labs</h2><div className="mt-5 grid gap-3 sm:grid-cols-2"><input required maxLength={50} value={roomCode} onChange={(event) => setRoomCode(event.target.value)} placeholder="Room code" className="rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]" /><input required maxLength={100} value={building} onChange={(event) => setBuilding(event.target.value)} placeholder="Building" className="rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]" /></div><input required maxLength={120} value={locationName} onChange={(event) => setLocationName(event.target.value)} placeholder="Location name" className="mt-3 w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]" /><select value={departmentId} onChange={(event) => setDepartmentId(event.target.value)} className="mt-3 w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]"><option value="">No department</option>{departments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}</select><Button type="submit" disabled={busy} className="mt-3 w-full">Add location</Button><div className="mt-5 space-y-2">{locations.map((location) => <p key={location.id} className="rounded-lg border border-[hsl(var(--border))] px-3 py-2 text-sm">{location.room_code} · {location.building} · {location.name}</p>)}</div></form>{message && <p role="status" className="lg:col-span-2 rounded-xl bg-[hsl(var(--secondary)/.15)] p-3 text-sm text-[hsl(161_38%_29%)]">{message}</p>}</section>;
 }
 
 function NotFound() { return <div className="grid min-h-[100dvh] place-items-center bg-[hsl(var(--background))] px-5 text-center"><div><span className="font-mono-app text-xs text-[hsl(var(--secondary))]">RETURNLOOP / 404</span><h1 className="mt-4 font-display text-5xl font-bold">This loop is empty.</h1><p className="mt-3 text-sm text-[hsl(var(--muted-foreground))]">There’s nothing here yet, but the campus is still looking out.</p><Link href="/" data-testid="link-404-home" className="mt-7 inline-flex items-center gap-2 font-bold text-[hsl(var(--primary))]">Return home <ArrowRight size={16} /></Link></div></div>; }
