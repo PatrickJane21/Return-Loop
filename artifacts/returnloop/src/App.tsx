@@ -296,8 +296,10 @@ function Feature({ icon: Icon, title, text, tone }: { icon: typeof ShieldCheck; 
 }
 
 function AuthPage() {
-  const [, setLocation] = useLocation();
+  const [location, setLocation] = useLocation();
   const { profile, signInWithEmail, createAccount, resendSignupConfirmation, requestPasswordReset } = useStore();
+  const accessMode = location.endsWith('/teacher') ? 'teacher' : location.endsWith('/admin') ? 'admin' : 'student';
+  const accessLabel = accessMode === 'teacher' ? 'Teacher access' : accessMode === 'admin' ? 'Admin access' : 'Student access';
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
@@ -422,7 +424,7 @@ function AuthPage() {
     }
   };
   return (
-    <div className="rl-noise min-h-[100dvh] bg-[hsl(var(--background))]">
+    <div className="rl-auth-shell min-h-[100dvh] bg-[hsl(var(--background))]">
       <TopBar
         action={
           <Link
@@ -434,25 +436,28 @@ function AuthPage() {
           </Link>
         }
       />
-      <main className="mx-auto grid max-w-[1050px] items-center gap-12 px-5 py-12 sm:px-8 lg:grid-cols-[.85fr_1fr] lg:py-20">
-        <div className="animate-in-up">
+      <main className="mx-auto grid min-h-[calc(100dvh-73px)] max-w-[1240px] items-center gap-10 px-5 py-8 sm:px-8 lg:grid-cols-[1.05fr_.95fr] lg:gap-20 lg:px-12 lg:py-14">
+        <div className="rl-auth-rail animate-in-up">
+          <div className="flex items-center gap-3 text-[11px] font-bold uppercase tracking-[.2em] text-[hsl(var(--muted-foreground))]"><span className="h-px w-10 bg-[hsl(var(--secondary))]" /> ReturnLoop / {accessLabel}</div>
           <Pill tone="green">
-            <LockKeyhole size={13} /> Made for your campus
+            <LockKeyhole size={13} /> Private campus access
           </Pill>
-          <h1 className="mt-6 max-w-md font-display text-5xl font-extrabold leading-[.95] tracking-[-.06em] text-[hsl(var(--primary))]">
-            Keep the things that keep{" "}
+          <h1 className="mt-6 max-w-2xl font-display text-5xl font-extrabold leading-[.9] tracking-[-.06em] text-[hsl(var(--primary))] sm:text-7xl">
+            The quiet way to keep{" "}
             <span className="text-[hsl(var(--secondary))]">you</span> going.
           </h1>
-          <p className="mt-5 max-w-sm leading-7 text-[hsl(var(--muted-foreground))]">
-            Sign in to register a new item, see a finder’s note, or help
-            something else find its way home.
+          <p className="mt-6 max-w-lg text-base leading-7 text-[hsl(var(--muted-foreground))] sm:text-lg">
+            A private place for the things you carry, the people who help, and the small moments that make a campus feel looked after.
           </p>
-          <div className="mt-8 flex items-center gap-3 text-xs text-[hsl(var(--muted-foreground))]">
-            <ShieldCheck size={16} className="text-[hsl(var(--secondary))]" />{" "}
-            Your identity stays private on every tag.
+          <div className="mt-12 grid max-w-lg grid-cols-2 gap-x-8 gap-y-5 border-t border-[hsl(var(--border))] pt-5 text-xs text-[hsl(var(--muted-foreground))] sm:grid-cols-3">
+            <span><strong className="block font-mono-app text-lg text-[hsl(var(--primary))]">01</strong>Sign in securely</span>
+            <span><strong className="block font-mono-app text-lg text-[hsl(var(--primary))]">02</strong>Keep your details private</span>
+            <span><strong className="block font-mono-app text-lg text-[hsl(var(--primary))]">03</strong>Bring things home</span>
           </div>
         </div>
-        <div className="rounded-[1.75rem] border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-5 shadow-[0_24px_80px_hsl(var(--primary)/.08)] sm:p-8">
+        <div className="rl-auth-panel rounded-[1.75rem] border border-[hsl(var(--border))] bg-[hsl(var(--card)/.78)] p-5 shadow-[0_30px_90px_hsl(var(--primary)/.14)] backdrop-blur-xl sm:p-8">
+          <div className="mb-6 flex items-start justify-between gap-4"><div><p className="font-mono-app text-[10px] uppercase tracking-[.16em] text-[hsl(var(--secondary))]">{accessLabel}</p><h2 className="mt-2 font-display text-2xl font-bold">Welcome back.</h2></div><span className="grid h-10 w-10 place-items-center rounded-xl bg-[hsl(var(--primary))] text-[hsl(var(--secondary))]"><Link2 size={18} /></span></div>
+          <div className="mb-5 flex flex-wrap gap-2 text-[11px] font-semibold text-[hsl(var(--muted-foreground))]">{[['student','Student','/auth/student'],['teacher','Teacher','/auth/teacher'],['admin','Admin','/auth/admin']].map(([key,label,href]) => <Link key={key} href={href} className={`rounded-full border px-3 py-1.5 transition ${accessMode === key ? 'border-[hsl(var(--secondary))] bg-[hsl(var(--secondary)/.14)] text-[hsl(var(--primary))]' : 'border-[hsl(var(--border))] hover:border-[hsl(var(--secondary)/.7)]'}`}>{label}</Link>)}</div>
           <div className="flex rounded-xl bg-[hsl(var(--muted)/.7)] p-1">
             <button
               type="button"
@@ -1432,7 +1437,7 @@ function NotFound() { return <div className="grid min-h-[100dvh] place-items-cen
 function Router() {
   const { loading } = useStore();
   if (loading) return <Splash />;
-  return <ErrorBoundary><Switch><Route path="/" component={HomePage} /><Route path="/auth/callback" component={AuthCallbackPage} /><Route path="/auth/reset" component={ResetPasswordPage} /><Route path="/auth" component={AuthPage} /><Route path="/app/new" component={NewItemPage} /><Route path="/app" component={StudentDashboard} /><Route path="/scan" component={ScanPage} /><Route path="/found/:token" component={FoundPage} /><Route path="/admin" component={AdminPage} /><Route path="/profile" component={ProfilePage} /><Route path="/notifications" component={NotificationsPage} /><Route component={NotFound} /></Switch></ErrorBoundary>;
+  return <ErrorBoundary><Switch><Route path="/" component={HomePage} /><Route path="/auth/callback" component={AuthCallbackPage} /><Route path="/auth/reset" component={ResetPasswordPage} /><Route path="/auth/student" component={AuthPage} /><Route path="/auth/teacher" component={AuthPage} /><Route path="/auth/admin" component={AuthPage} /><Route path="/auth" component={AuthPage} /><Route path="/app/new" component={NewItemPage} /><Route path="/app" component={StudentDashboard} /><Route path="/scan" component={ScanPage} /><Route path="/found/:token" component={FoundPage} /><Route path="/admin" component={AdminPage} /><Route path="/profile" component={ProfilePage} /><Route path="/notifications" component={NotificationsPage} /><Route component={NotFound} /></Switch></ErrorBoundary>;
 }
 function App() {
   if (!supabaseConfigured) return <ConfigMissing />;

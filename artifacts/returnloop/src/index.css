@@ -321,6 +321,40 @@
   }
 }
 
+.rl-auth-shell {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background: linear-gradient(120deg, hsl(var(--background)) 0%, hsl(var(--background)) 55%, hsl(var(--secondary) / .08) 100%);
+}
+
+.rl-auth-shell::before {
+  position: absolute;
+  z-index: -1;
+  top: 14%;
+  right: 8%;
+  width: 42rem;
+  height: 42rem;
+  border: 1px solid hsl(var(--secondary) / .18);
+  border-radius: 50%;
+  content: '';
+  transform: rotate(18deg);
+  box-shadow: 0 0 0 5rem hsl(var(--secondary) / .025), 0 0 0 10rem hsl(var(--accent) / .02);
+}
+
+.rl-auth-panel {
+  animation: auth-panel-in .7s cubic-bezier(.22, 1, .36, 1) both;
+}
+
+@keyframes auth-panel-in {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rl-auth-panel { animation: none; }
+}
+
 /**
  * Using the elevate system.
  * Automatic contrast adjustment.
