@@ -25,12 +25,17 @@ type Item = { id: string; owner_id: string; item_name: string; category: Categor
 type ReportStatus = 'new' | 'reviewed' | 'returned' | 'dismissed';
 type Report = { id: string; item_id: string; finder_name: string; finder_contact: string; found_location: string; found_date: string; message: string; status: ReportStatus; created_at: string };
 type Notice = { id: string; recipient_user_id: string; item_id?: string | null; found_report_id?: string | null; title: string; message: string; notification_type: string; is_read: boolean; created_at: string };
-type Db = { profiles: Profile[]; items: Item[]; reports: Report[]; notifications: Notice[] };
+type Department = { id: string; name: string; active: boolean };
+type Location = { id: string; room_code: string; building: string; name: string; department_id?: string | null; active: boolean };
+type ComplaintStatus = 'submitted' | 'under_review' | 'assigned' | 'in_progress' | 'resolved';
+type Complaint = { id: string; location_id: string; submitted_by: string; title: string; description: string; status: ComplaintStatus; assigned_department_id?: string | null; assigned_to?: string | null; created_at: string; reviewed_at?: string | null; assigned_at?: string | null; started_at?: string | null; resolved_at?: string | null; resolution_notes?: string | null };
+type ComplaintHistory = { id: string; complaint_id: string; old_status?: ComplaintStatus | null; new_status: ComplaintStatus; changed_by?: string | null; notes?: string | null; created_at: string };
+type Db = { profiles: Profile[]; items: Item[]; reports: Report[]; notifications: Notice[]; departments: Department[]; locations: Location[]; complaints: Complaint[]; complaintHistory: ComplaintHistory[] };
 type PublicItem = { item_name: string; category: string; description: string; status: string };
 type AuthResult = { ok: boolean; error?: string; needsConfirm?: boolean };
 
 const queryClient = new QueryClient();
-const emptyDb: Db = { profiles: [], items: [], reports: [], notifications: [] };
+const emptyDb: Db = { profiles: [], items: [], reports: [], notifications: [], departments: [], locations: [], complaints: [], complaintHistory: [] };
 
 type Store = {
   db: Db;
@@ -45,6 +50,8 @@ type Store = {
   signOut: () => Promise<void>;
   addItem: (input: { item_name: string; category: Category; description: string }) => Promise<{ item?: Item; error?: string }>;
   updateItemDetails: (itemId: string, input: { item_name: string; category: Category; description: string }) => Promise<string | null>;
+  createComplaint: (input: { location_id: string; title: string; description: string }) => Promise<string | null>;
+  updateComplaint: (complaintId: string, input: { status?: ComplaintStatus; assigned_department_id?: string | null; assigned_to?: string | null; resolution_notes?: string | null }) => Promise<string | null>;
   updateItemStatus: (itemId: string, status: Status) => Promise<string | null>;
   markReturned: (itemId: string) => Promise<string | null>;
   dismissReport: (reportId: string) => Promise<string | null>;
@@ -67,18 +74,26 @@ function StoreProvider({ children }: { children: ReactNode }) {
 
   const load = useCallback(async (uid: string | null) => {
     if (!uid) { setDb(emptyDb); return; }
-    const [p, i, r, n, roleResult] = await Promise.all([
+    const [p, i, r, n, roleResult, departmentsResult, locationsResult, complaintsResult, historyResult] = await Promise.all([
       supabase.from('profiles').select('*'),
       supabase.from('items').select('*').order('created_at', { ascending: false }),
       supabase.from('found_reports').select('*').order('created_at', { ascending: false }),
       supabase.from('notifications').select('*').order('created_at', { ascending: false }),
       supabase.from('user_roles').select('role').eq('user_id', uid).maybeSingle(),
+      supabase.from('departments').select('*').order('name'),
+      supabase.from('locations').select('*').eq('active', true).order('building').order('room_code'),
+      supabase.from('complaints').select('*').order('created_at', { ascending: false }),
+      supabase.from('complaint_status_history').select('*').order('created_at', { ascending: false }),
     ]);
     setDb({
       profiles: (p.data ?? []) as Profile[],
       items: (i.data ?? []) as Item[],
       reports: (r.data ?? []) as Report[],
       notifications: (n.data ?? []) as Notice[],
+      departments: (departmentsResult.data ?? []) as Department[],
+      locations: (locationsResult.data ?? []) as Location[],
+      complaints: (complaintsResult.data ?? []) as Complaint[],
+      complaintHistory: (historyResult.data ?? []) as ComplaintHistory[],
     });
     const configuredRole = roleResult.data?.role;
     setAccessRole(configuredRole === 'admin' || configuredRole === 'teacher' ? configuredRole : 'student');
@@ -185,6 +200,24 @@ function StoreProvider({ children }: { children: ReactNode }) {
       await load(userId);
       return null;
     },
+    createComplaint: async (input) => {
+      if (!userId) return 'Please sign in before submitting a complaint.';
+      const { error } = await supabase.from('complaints').insert({
+        location_id: input.location_id,
+        submitted_by: userId,
+        title: input.title.trim(),
+        description: input.description.trim(),
+      });
+      if (error) return error.message;
+      await load(userId);
+      return null;
+    },
+    updateComplaint: async (complaintId, input) => {
+      const { error } = await supabase.from('complaints').update(input).eq('id', complaintId);
+      if (error) return error.message;
+      await load(userId);
+      return null;
+    },
     updateItemStatus: async (itemId, status) => {
       if (status === 'returned') return 'Only teachers can mark items as returned.';
       const { error } = await supabase.from('items').update({ status }).eq('id', itemId);
@@ -269,6 +302,7 @@ function DashboardShell({ children, active = 'home' }: { children: ReactNode; ac
           <SideLink href="/app" active={active === 'home'} icon={Home}>Overview</SideLink>
           <SideLink href="/app/new" active={active === 'new'} icon={Plus}>Register an item</SideLink>
           <SideLink href="/scan" active={active === 'scan'} icon={ScanLine}>Scan a code</SideLink>
+          <SideLink href="/complaints" active={active === 'complaints'} icon={Settings}>Room care</SideLink>
          </div><div className="mt-9 space-y-1"><p className="mb-3 px-3 text-[10px] font-bold uppercase tracking-[.16em] text-[hsl(var(--sidebar-foreground)/.46)]">Account</p><SideLink href="/notifications" active={active === 'notifications'} icon={Bell}>Notifications</SideLink><SideLink href="/profile" active={active === 'profile'} icon={UserRound}>Profile & privacy</SideLink></div>
         </div>
         <div className="rounded-2xl border border-[hsl(var(--sidebar-border))] bg-[hsl(var(--sidebar-accent)/.65)] p-3"><div className="mb-2 flex items-center gap-2"><span className="grid h-7 w-7 place-items-center rounded-full bg-[hsl(var(--secondary))] text-xs font-bold text-[hsl(var(--primary))]">{profile?.full_name.split(' ').map((n) => n[0]).join('')}</span><span className="truncate text-xs font-semibold">{profile?.full_name}</span></div><p className="text-[11px] leading-4 text-[hsl(var(--sidebar-foreground)/.56)]">A quiet safety net for campus life.</p></div>
@@ -1212,8 +1246,8 @@ function FoundPage() {
 function Field({ label, value, setValue, placeholder, test, required }: { label: string; value: string; setValue: (value: string) => void; placeholder: string; test: string; required?: boolean }) { return <div><label className="mb-1.5 block text-xs font-bold">{label}</label><input value={value} onChange={(e) => setValue(e.target.value)} required={required} placeholder={placeholder} data-testid={test} className="w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]" /></div>; }
 
 function AdminPage() {
-  const { db, profile, accessRole, markReturned, dismissReport } = useStore();
-  const [tab, setTab] = useState<"overview" | "items" | "students">("overview");
+  const { db, profile, accessRole, markReturned, dismissReport, updateComplaint } = useStore();
+  const [tab, setTab] = useState<"overview" | "items" | "students" | "complaints">("overview");
   const [reportSearch, setReportSearch] = useState("");
   const [reportStatus, setReportStatus] = useState<"all" | ReportStatus>("all");
   if (!profile) return <AccessGate />;
@@ -1276,7 +1310,7 @@ function AdminPage() {
             </p>
           </div>
           <div className="flex rounded-xl bg-[hsl(var(--muted)/.7)] p-1">
-            {(["overview", "items", "students"] as const).map((entry) => (
+            {(["overview", "items", "students", "complaints"] as const).map((entry) => (
               <button
                 key={entry}
                 onClick={() => setTab(entry)}
@@ -1404,6 +1438,9 @@ function AdminPage() {
         {tab === "students" && (
           <AdminStudents profiles={db.profiles} items={db.items} />
         )}
+        {tab === "complaints" && (
+          <AdminComplaintQueue complaints={db.complaints} locations={db.locations} departments={db.departments} onUpdate={(id, input) => { void updateComplaint(id, input); }} />
+        )}
       </main>
     </div>
   );
@@ -1441,12 +1478,68 @@ function NotificationsPage() {
   return <DashboardShell active="notifications"><div className="mx-auto max-w-[760px] px-5 py-7 sm:px-8 md:py-10 lg:px-12"><Pill tone="amber"><Bell size={13} /> Notifications</Pill><h1 className="mt-5 font-display text-4xl font-bold tracking-[-.05em]">From your loop</h1><div className="mt-8 space-y-3">{notes.length ? notes.map((note) => <NotificationCard key={note.id} note={note} />) : <EmptyState text="No notes yet. That’s a good sign." />}</div></div></DashboardShell>;
 }
 
+function ComplaintsPage() {
+  const { roomCode } = useParams<{ roomCode?: string }>();
+  const { db, profile, createComplaint } = useStore();
+  const [locationId, setLocationId] = useState('');
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  useEffect(() => {
+    if (!roomCode || locationId) return;
+    const match = db.locations.find((location) => location.room_code.toLowerCase() === roomCode.toLowerCase());
+    if (match) setLocationId(match.id);
+  }, [db.locations, locationId, roomCode]);
+  if (!profile) return <AccessGate />;
+  const ownComplaints = db.complaints.filter((complaint) => complaint.submitted_by === profile.id);
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setBusy(true); setMessage(''); setError('');
+    const problem = await createComplaint({ location_id: locationId, title, description });
+    setBusy(false);
+    if (problem) { setError(problem); return; }
+    setLocationId(''); setTitle(''); setDescription('');
+    setMessage('Complaint submitted. An approved staff member can now review it.');
+  };
+  return <DashboardShell active="complaints"><div className="mx-auto max-w-[980px] px-5 py-7 sm:px-8 md:py-10 lg:px-12">
+    <Pill tone="amber"><Settings size={13} /> Classroom care</Pill>
+    <h1 className="mt-5 font-display text-4xl font-bold tracking-[-.05em]">Report a room issue.</h1>
+    <p className="mt-2 max-w-xl text-sm leading-6 text-[hsl(var(--muted-foreground))]">Choose a registered room and leave enough detail for the right team to act. A location QR identifies the room; it does not grant staff access.</p>
+    <div className="mt-8 grid gap-7 lg:grid-cols-[.9fr_1.1fr]">
+      <form onSubmit={submit} className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card)/.65)] p-5 sm:p-7">
+        <label className="mb-1.5 block text-xs font-bold">Room or lab</label>
+        <select required value={locationId} onChange={(event) => setLocationId(event.target.value)} className="w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]">
+          <option value="">Choose a registered location</option>
+          {db.locations.map((location) => <option key={location.id} value={location.id}>{location.room_code} · {location.building} · {location.name}</option>)}
+        </select>
+        <label className="mb-1.5 mt-5 block text-xs font-bold">What needs attention?</label>
+        <input required maxLength={120} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="e.g. Projector is not turning on" className="w-full rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]" />
+        <label className="mb-1.5 mt-5 block text-xs font-bold">Details</label>
+        <textarea required maxLength={2000} rows={5} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What happened, and when did you notice it?" className="w-full resize-y rounded-xl border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 py-3 text-sm outline-none focus:border-[hsl(var(--secondary))]" />
+        {message && <p role="status" className="mt-4 rounded-xl bg-[hsl(var(--secondary)/.15)] p-3 text-sm text-[hsl(161_38%_29%)]">{message}</p>}
+        {error && <p role="alert" className="mt-4 rounded-xl bg-[hsl(var(--destructive)/.1)] p-3 text-sm text-[hsl(var(--destructive))]">{error}</p>}
+        <Button type="submit" disabled={busy || !db.locations.length} className="mt-5 w-full">{busy ? 'Submitting…' : 'Submit complaint'} <ArrowRight size={16} /></Button>
+      </form>
+      <section>
+        <div className="flex items-end justify-between"><div><p className="font-mono-app text-[10px] uppercase tracking-[.17em] text-[hsl(var(--muted-foreground))]">Your reports</p><h2 className="mt-2 font-display text-2xl font-bold">Track the handoff.</h2></div><Pill tone="blue">{ownComplaints.length}</Pill></div>
+        <div className="mt-5 space-y-3">{ownComplaints.length ? ownComplaints.map((complaint) => { const location = db.locations.find((entry) => entry.id === complaint.location_id); return <article key={complaint.id} className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card)/.55)] p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-bold">{complaint.title}</p><p className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">{location?.room_code ?? 'Location'} · {location?.building ?? ''}</p></div><Pill tone={complaint.status === 'resolved' ? 'green' : complaint.status === 'in_progress' ? 'amber' : 'blue'}>{complaint.status.replace('_', ' ')}</Pill></div><p className="mt-3 text-sm leading-6 text-[hsl(var(--muted-foreground))]">{complaint.description}</p></article>; }) : <EmptyState text="No classroom or lab complaints yet." />}</div>
+      </section>
+    </div>
+  </div></DashboardShell>;
+}
+
+function AdminComplaintQueue({ complaints, locations, departments, onUpdate }: { complaints: Complaint[]; locations: Location[]; departments: Department[]; onUpdate: (id: string, input: { status?: ComplaintStatus; assigned_department_id?: string | null; resolution_notes?: string | null }) => void }) {
+  return <section className="mt-8 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card)/.6)] p-5 sm:p-7"><div className="flex items-end justify-between"><div><p className="font-mono-app text-[10px] uppercase tracking-[.17em] text-[hsl(var(--muted-foreground))]">Operations</p><h2 className="mt-2 font-display text-2xl font-bold">Classroom care queue</h2></div><Pill tone="amber">{complaints.filter((complaint) => complaint.status !== 'resolved').length} open</Pill></div><div className="mt-5 space-y-3">{complaints.length ? complaints.map((complaint) => { const location = locations.find((entry) => entry.id === complaint.location_id); return <article key={complaint.id} className="rounded-xl border border-[hsl(var(--border))] p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-sm font-bold">{complaint.title}</p><p className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">{location?.room_code ?? 'Location'} · {location?.building ?? ''}</p></div><select value={complaint.status} onChange={(event) => onUpdate(complaint.id, { status: event.target.value as ComplaintStatus })} aria-label={`Update status for ${complaint.title}`} className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-2 py-2 text-xs"><option value="submitted">Submitted</option><option value="under_review">Under review</option><option value="assigned">Assigned</option><option value="in_progress">In progress</option><option value="resolved">Resolved</option></select></div><p className="mt-3 text-sm leading-6 text-[hsl(var(--muted-foreground))]">{complaint.description}</p><div className="mt-3 flex flex-wrap gap-2"><select value={complaint.assigned_department_id ?? ''} onChange={(event) => onUpdate(complaint.id, { assigned_department_id: event.target.value || null })} aria-label={`Assign department for ${complaint.title}`} className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-2 py-2 text-xs"><option value="">Assign department</option>{departments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}</select>{complaint.status === 'resolved' && <Button type="button" variant="soft" className="px-3 py-2 text-xs" onClick={() => onUpdate(complaint.id, { resolution_notes: window.prompt('Resolution notes', complaint.resolution_notes ?? '') ?? complaint.resolution_notes })}>Add resolution note</Button>}</div></article>; }) : <EmptyState text="No classroom complaints yet." />}</div></section>;
+}
+
 function NotFound() { return <div className="grid min-h-[100dvh] place-items-center bg-[hsl(var(--background))] px-5 text-center"><div><span className="font-mono-app text-xs text-[hsl(var(--secondary))]">RETURNLOOP / 404</span><h1 className="mt-4 font-display text-5xl font-bold">This loop is empty.</h1><p className="mt-3 text-sm text-[hsl(var(--muted-foreground))]">There’s nothing here yet, but the campus is still looking out.</p><Link href="/" data-testid="link-404-home" className="mt-7 inline-flex items-center gap-2 font-bold text-[hsl(var(--primary))]">Return home <ArrowRight size={16} /></Link></div></div>; }
 
 function Router() {
   const { loading } = useStore();
   if (loading) return <Splash />;
-  return <ErrorBoundary><Switch><Route path="/" component={HomePage} /><Route path="/auth/callback" component={AuthCallbackPage} /><Route path="/auth/reset" component={ResetPasswordPage} /><Route path="/auth/student" component={AuthPage} /><Route path="/auth/teacher" component={AuthPage} /><Route path="/auth/admin" component={AuthPage} /><Route path="/auth" component={AuthPage} /><Route path="/app/new" component={NewItemPage} /><Route path="/app" component={StudentDashboard} /><Route path="/scan" component={ScanPage} /><Route path="/found/:token" component={FoundPage} /><Route path="/admin" component={AdminPage} /><Route path="/profile" component={ProfilePage} /><Route path="/notifications" component={NotificationsPage} /><Route component={NotFound} /></Switch></ErrorBoundary>;
+  return <ErrorBoundary><Switch><Route path="/" component={HomePage} /><Route path="/auth/callback" component={AuthCallbackPage} /><Route path="/auth/reset" component={ResetPasswordPage} /><Route path="/auth/student" component={AuthPage} /><Route path="/auth/teacher" component={AuthPage} /><Route path="/auth/admin" component={AuthPage} /><Route path="/auth" component={AuthPage} /><Route path="/app/new" component={NewItemPage} /><Route path="/app" component={StudentDashboard} /><Route path="/complaints/location/:roomCode" component={ComplaintsPage} /><Route path="/complaints" component={ComplaintsPage} /><Route path="/scan" component={ScanPage} /><Route path="/found/:token" component={FoundPage} /><Route path="/admin" component={AdminPage} /><Route path="/profile" component={ProfilePage} /><Route path="/notifications" component={NotificationsPage} /><Route component={NotFound} /></Switch></ErrorBoundary>;
 }
 function App() {
   if (!supabaseConfigured) return <ConfigMissing />;
